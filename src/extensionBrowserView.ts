@@ -27,9 +27,13 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
       switch (msg.type) {
         case 'ready':
           const config = vscode.workspace.getConfiguration('chineseEyes');
-          const currentProvider = config.get('translationProvider', 'local');
+          let currentProvider = config.get('translationProvider', 'local');
           const savedApiKey = config.get('apiKey', '') || this._context.globalState.get('apiKey', '');
           const hasApiKey = !!savedApiKey;
+          // 保险：如果没有 API Key 却选了非 local 翻译源，强制切回 local
+          if (currentProvider !== 'local' && !hasApiKey) {
+            currentProvider = 'local';
+          }
           if (savedApiKey) {
             this._translator.updateConfig({
               provider: currentProvider,
@@ -79,6 +83,12 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
             this.postMessage({ type: 'providerSet', provider: msg.provider });
           } catch (err: any) {
             this.postMessage({ type: 'error', message: '设置翻译源失败: ' + err.message });
+          }
+          break;
+
+        case 'openUrl':
+          if (msg.url) {
+            vscode.env.openExternal(vscode.Uri.parse(msg.url));
           }
           break;
 
@@ -339,6 +349,14 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
       '⚠️ DeepSeek = 翻译 + AI 总结 都可用<br>' +
       '⚠️ DeepL / Google / LibreTranslate = 仅翻译，不能 AI 总结<br>' +
       '⚠️ 本地词典 = 仅基础翻译，不需要 API Key' +
+      '</div>' +
+      '<div style="margin-top:8px;padding:10px;background:rgba(30,165,91,.08);border:1px solid var(--success);border-radius:6px;font-size:11px;line-height:1.7;color:var(--fg)">' +
+      '<strong style="color:var(--success)">🔑 如何获取 DeepSeek API Key？</strong><br>' +
+      '1. 打开 <a href="#" onclick="vscode.postMessage({type:\'openUrl\',url:\'https://platform.deepseek.com/\'});return false" style="color:var(--link)">platform.deepseek.com</a> 注册账号<br>' +
+      '2. 登录后进入「API Keys」页面<br>' +
+      '3. 点击「创建 API Key」并复制<br>' +
+      '4. 将 Key 粘贴到上方输入框中<br>' +
+      '5. 点击「保存」按钮，自动切换为 DeepSeek 引擎' +
       '</div>' +
       '</div>' +
       '<div class="status-bar">' +
