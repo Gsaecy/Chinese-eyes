@@ -1,0 +1,108 @@
+{
+  "name": "chinese-eyes",
+  "displayName": "CHINESE EYES",
+  "description": "粘贴英文文本自动翻译为中文",
+  "version": "0.1.0",
+  "publisher": "chinese-eyes",
+  "license": "MIT",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Machine Learning",
+    "Other"
+  ],
+  "keywords": [
+    "翻译",
+    "translate",
+    "chinese",
+    "中文"
+  ],
+  "main": "./out/extension.js",
+  "icon": "media/icon.svg",
+  "contributes": {
+    "configuration": {
+      "type": "object",
+      "title": "CHINESE EYES",
+      "properties": {
+        "chineseEyes.translationProvider": {
+          "type": "string",
+          "default": "local",
+          "description": "翻译提供商",
+          "enum": ["local", "deepl", "google", "libretranslate", "deepseek"],
+          "order": 1
+        },
+        "chineseEyes.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "翻译 API 密钥 (DeepSeek/DeepL/Google)",
+          "markdownDescription": "翻译 API 密钥",
+          "order": 2
+        },
+        "chineseEyes.apiEndpoint": {
+          "type": "string",
+          "default": "",
+          "description": "自定义 API 端点",
+          "markdownDescription": "自定义 API 端点 URL",
+          "order": 3
+        },
+        "chineseEyes.apiModel": {
+          "type": "string",
+          "default": "",
+          "description": "自定义模型名称",
+          "markdownDescription": "如 `deepseek-chat` 或 `deepseek-reasoner`",
+          "order": 4
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "chineseEyes-sidebar",
+          "title": "CHINESE EYES",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "chineseEyes-sidebar": [
+        {
+          "id": "chineseEyes.marketplace",
+          "name": "CHINESE EYES 翻译面板",
+          "type": "webview"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "chineseEyes.openPanel",
+        "title": "🌐 CHINESE EYES - 打开翻译面板"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext .ts",
+    "lint:fix": "eslint src --ext .ts --fix",
+    "pretest": "npm run compile",
+    "test": "node ./out/test/runTest.js",
+    "package": "vsce package",
+    "publish": "vsce publish",
+    "clean": "rimraf out"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "rimraf": "^5.0.0",
+    "@vscode/vsce": "^2.0.0"
+  }
+}
