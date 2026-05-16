@@ -1,9 +1,9 @@
-# 🇨🇳 CHINESE EYES — 看透外文，一目了然
+# 🇨🇳 扩展选择助手 — 看透外文，一目了然
 
 > **把英文 VS Code 扩展翻译成中文，让不擅长英语的用户也能轻松看懂扩展的功能和收费信息。**
 
-![Visual Studio Marketplace Version](https://img.shields.io/visual-studio-marketplace/v/chinese-eyes.chinese-eyes)
-![Visual Studio Marketplace Installs](https://img.shields.io/visual-studio-marketplace/i/chinese-eyes.chinese-eyes)
+![Visual Studio Marketplace Version](https://img.shields.io/visual-studio-marketplace/v/ext-trans-picker.ext-trans-picker)
+![Visual Studio Marketplace Installs](https://img.shields.io/visual-studio-marketplace/i/ext-trans-picker.ext-trans-picker)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
 ---
@@ -65,7 +65,7 @@
 ### 从 VS Code 市场安装（推荐）
 1. 打开 VS Code
 2. 点击左侧活动栏的扩展图标（或按 `Ctrl+Shift+X`）
-3. 搜索 **"CHINESE EYES"**
+3. 搜索 **"扩展选择助手"**
 4. 点击「安装」
 
 ### 手动安装
@@ -78,8 +78,8 @@
 ## 📖 快速上手
 
 ### 第一步：打开面板
-- 点击左侧活动栏的 🇨🇳 **CHINESE EYES** 图标
-- 或按 `Ctrl+Shift+P` → 输入「CHINESE EYES」
+- 点击左侧活动栏的 🇨🇳 扩展选择助手图标
+- 或按 `Ctrl+Shift+P` → 输入「扩展选择助手」
 
 ### 第二步：粘贴并翻译
 1. 复制扩展市场的英文描述或 README
@@ -180,4 +180,4 @@ npm run package
 
 ---
 
-**CHINESE EYES** — 让语言不再成为探索扩展的障碍。
+**扩展选择助手** — 让语言不再成为探索扩展的障碍。
