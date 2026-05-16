@@ -30,7 +30,7 @@
   "contributes": {
     "configuration": {
       "type": "object",
-      "title": "CHINESE EYES",
+      "title": "扩展选择助手",
       "properties": {
         "chineseEyes.translationProvider": {
           "type": "string",
@@ -72,7 +72,7 @@
       "activitybar": [
         {
           "id": "chineseEyes-sidebar",
-          "title": "CHINESE EYES",
+          "title": "扩展选择助手",
           "icon": "media/icon.png"
         }
       ]
@@ -81,7 +81,7 @@
       "chineseEyes-sidebar": [
         {
           "id": "chineseEyes.marketplace",
-          "name": "CHINESE EYES 翻译面板",
+          "name": "扩展选择助手 翻译面板",
           "type": "webview"
         }
       ]
@@ -89,7 +89,7 @@
     "commands": [
       {
         "command": "chineseEyes.openPanel",
-        "title": "🌐 CHINESE EYES - 打开翻译面板"
+        "title": "🌐 扩展选择助手 - 打开翻译面板"
       }
     ]
   },

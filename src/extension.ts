@@ -6,7 +6,7 @@ let provider: ExtensionBrowserViewProvider | undefined;
 let translator: Translator | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
-  console.log('[chinese-eyes] 激活中...');
+  console.log('[ext-trans-picker] 激活中...');
 
   try {
     const defaultConfig = {
@@ -50,13 +50,13 @@ export function activate(context: vscode.ExtensionContext) {
       })
     );
 
-    console.log('[chinese-eyes] 激活完成');
+    console.log('[ext-trans-picker] 激活完成');
   } catch (err: any) {
     console.error('[chinese-eyes] 激活失败:', err);
-    vscode.window.showErrorMessage(`CHINESE EYES 激活失败: ${err.message}`);
+    vscode.window.showErrorMessage(`扩展选择助手 激活失败: ${err.message}`);
   }
 }
 
 export function deactivate() {
-  console.log('[chinese-eyes] 已停用');
+  console.log('[ext-trans-picker] 已停用');
 }

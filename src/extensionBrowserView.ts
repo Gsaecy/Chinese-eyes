@@ -83,11 +83,11 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
           break;
 
         case 'openSettings':
-          vscode.commands.executeCommand('workbench.action.openSettings', '@ext:chinese-eyes');
+          vscode.commands.executeCommand('workbench.action.openSettings', '@ext:ext-trans-picker');
           break;
       }
     } catch (err: any) {
-      console.error('[chinese-eyes] handleMessage 异常:', err);
+      console.error('[ext-trans-picker] handleMessage 异常:', err);
       this.postMessage({ type: 'error', message: err.message });
     }
   }
@@ -285,8 +285,8 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
       '</head>' +
       '<body>' +
       '<div id="app">' +
-      '<h2>CHINESE EYES</h2>' +
-      '<div class="subtitle">粘贴外文 -> 自动翻译 -> AI 总结</div>' +
+      '<h2>扩展选择助手</h2>' +
+      '<div class="subtitle">粘贴外文 → 自动翻译 → AI 总结</div>' +
       '<div class="provider-row">' +
       '<span class="provider-btn active" data-provider="local">本地词典</span>' +
       '<span class="provider-btn" data-provider="deepseek">DeepSeek</span>' +
