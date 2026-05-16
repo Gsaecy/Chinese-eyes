@@ -226,6 +226,9 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
       'body{font-family:var(--vscode-font-family);font-size:13px;color:var(--fg);background:var(--bg);padding:12px}' +
       'h2{font-size:15px;font-weight:700;margin-bottom:4px;display:flex;align-items:center;gap:6px}' +
       '.subtitle{font-size:11px;color:var(--sub);margin-bottom:12px}' +
+      '.capability-notice{padding:8px 10px;border-radius:6px;font-size:11px;line-height:1.6;margin-bottom:10px;display:none}' +
+      '.capability-notice.warning{display:block;background:rgba(201,169,60,.12);border:1px solid var(--warning);color:var(--warning)}' +
+      '.capability-notice.info{display:block;background:rgba(30,165,91,.1);border:1px solid var(--success);color:var(--success)}' +
       '.provider-row{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}' +
       '.provider-btn{padding:4px 10px;border-radius:12px;font-size:11px;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--sub);transition:all .15s;user-select:none}' +
       '.provider-btn:hover{border-color:var(--btn);color:var(--btn)}' +
@@ -287,6 +290,7 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
       '<div id="app">' +
       '<h2>扩展选择助手</h2>' +
       '<div class="subtitle">粘贴外文 → 自动翻译 → AI 总结</div>' +
+      '<div class="capability-notice" id="capabilityNotice"></div>' +
       '<div class="provider-row">' +
       '<span class="provider-btn active" data-provider="local">本地词典</span>' +
       '<span class="provider-btn" data-provider="deepseek">DeepSeek</span>' +
@@ -332,13 +336,15 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
       '<button class="btn-save" id="saveSettingsBtn">保存</button>' +
       '</div>' +
       '<div class="settings-hint">' +
-      '总结功能推荐使用 DeepSeek(需 API Key)<br>' +
-      '本地词典只能翻译，不能做 AI 总结' +
+      '⚠️ DeepSeek = 翻译 + AI 总结 都可用<br>' +
+      '⚠️ DeepL / Google / LibreTranslate = 仅翻译，不能 AI 总结<br>' +
+      '⚠️ 本地词典 = 仅基础翻译，不需要 API Key' +
       '</div>' +
       '</div>' +
       '<div class="status-bar">' +
-      '<span class="status-item"><span class="status-dot green" id="providerDot"></span> 翻译源: <span id="currentProvider">local</span></span>' +
-      '<span class="status-item" id="apiKeyStatus">未配置</span>' +
+      '<span class="status-item"><span class="status-dot green" id="translateDot"></span> 翻译: <span id="translateStatus">就绪</span></span>' +
+      '<span class="status-item"><span class="status-dot yellow" id="summaryDot"></span> 总结: <span id="summaryStatus">需 DeepSeek</span></span>' +
+      '<span class="status-item">翻译源: <span id="currentProvider">local</span></span>' +
       '</div>' +
       '<div class="toast" id="toast"></div>' +
       '</div>' +
@@ -362,19 +368,65 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
       'const modelInput = document.getElementById("modelInput");' +
       'const saveSettingsBtn = document.getElementById("saveSettingsBtn");' +
       'const currentProvider = document.getElementById("currentProvider");' +
-      'const apiKeyStatus = document.getElementById("apiKeyStatus");' +
-      'const providerDot = document.getElementById("providerDot");' +
+      'const translateStatus = document.getElementById("translateStatus");' +
+      'const summaryStatus = document.getElementById("summaryStatus");' +
+      'const translateDot = document.getElementById("translateDot");' +
+      'const summaryDot = document.getElementById("summaryDot");' +
+      'const capabilityNotice = document.getElementById("capabilityNotice");' +
       'const toast = document.getElementById("toast");' +
       'const providerBtns = document.querySelectorAll(".provider-btn");' +
       'let currentProviderVal = "local";' +
       'let hasApiKey = false;' +
       'let lastTranslatedText = "";' +
+      'function updateCapabilityUI(provider, hasKey){' +
+      '  var canSummarize = (provider === "deepseek" && hasKey);' +
+      '  var canTranslate = (provider === "local" || hasKey);' +
+      '  if (provider === "local") {' +
+      '    translateStatus.textContent = "就绪(本地)";' +
+      '    translateDot.className = "status-dot green";' +
+      '  } else if (hasKey) {' +
+      '    translateStatus.textContent = "就绪";' +
+      '    translateDot.className = "status-dot green";' +
+      '  } else {' +
+      '    translateStatus.textContent = "需配置 API";' +
+      '    translateDot.className = "status-dot red";' +
+      '  }' +
+      '  if (canSummarize) {' +
+      '    summaryStatus.textContent = "可用";' +
+      '    summaryDot.className = "status-dot green";' +
+      '    capabilityNotice.className = "capability-notice";' +
+      '    capabilityNotice.style.display = "none";' +
+      '  } else if (provider === "deepseek" && !hasKey) {' +
+      '    summaryStatus.textContent = "需配置 API";' +
+      '    summaryDot.className = "status-dot red";' +
+      '    capabilityNotice.className = "capability-notice warning";' +
+      '    capabilityNotice.innerHTML = "⚠️ 当前翻译源为 DeepSeek，但未配置 API Key。请在设置中填入 API Key 后方可使用翻译和 AI 总结功能。";' +
+      '    capabilityNotice.style.display = "block";' +
+      '  } else if (provider === "local") {' +
+      '    summaryStatus.textContent = "不支持";' +
+      '    summaryDot.className = "status-dot red";' +
+      '    capabilityNotice.className = "capability-notice warning";' +
+      '    capabilityNotice.innerHTML = "⚠️ 本地词典只能做基础翻译，不支持 AI 总结。如需 AI 总结功能，请切换到 DeepSeek 并配置 API Key。";' +
+      '    capabilityNotice.style.display = "block";' +
+      '  } else {' +
+      '    summaryStatus.textContent = "需 DeepSeek";' +
+      '    summaryDot.className = "status-dot yellow";' +
+      '    capabilityNotice.className = "capability-notice warning";' +
+      '    capabilityNotice.innerHTML = "⚠️ 当前使用的 \\"" + providerName(provider) + "\\" API 仅支持翻译，不支持 AI 总结。如需 AI 总结，请切换到 DeepSeek 翻译源。";' +
+      '    capabilityNotice.style.display = "block";' +
+      '  }' +
+      '}' +
+      'function providerName(p){' +
+      '  var names = {local:"本地词典",deepseek:"DeepSeek",deepl:"DeepL",google:"Google",libretranslate:"LibreTranslate"};' +
+      '  return names[p] || p;' +
+      '}' +
       'providerBtns.forEach(function(btn){' +
       '  btn.addEventListener("click",function(){' +
       '    providerBtns.forEach(function(b){b.classList.remove("active")});' +
       '    btn.classList.add("active");' +
       '    currentProviderVal = btn.dataset.provider;' +
       '    currentProvider.textContent = currentProviderVal;' +
+      '    updateCapabilityUI(currentProviderVal, hasApiKey);' +
       '    if (currentProviderVal !== "local" && !hasApiKey) {' +
       '      showToast("请在设置中配置 API Key","info");' +
       '      expandSettings();' +
@@ -421,6 +473,11 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
       '});' +
       'summarizeBtn.addEventListener("click",function(){' +
       '  if (!lastTranslatedText) { showToast("请先翻译文本","error"); return; }' +
+      '  if (!(currentProviderVal === "deepseek" && hasApiKey)) {' +
+      '    showToast("AI 总结需要 DeepSeek API。请在设置中配置 DeepSeek Key 或切换到 DeepSeek 翻译源","error");' +
+      '    expandSettings();' +
+      '    return;' +
+      '  }' +
       '  summarySection.style.display = "none";' +
       '  summarizeBtn.disabled = true;' +
       '  summarizeBtn.textContent = "正在分析...";' +
@@ -433,11 +490,10 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
       '      currentProviderVal = msg.provider || "local";' +
       '      currentProvider.textContent = currentProviderVal;' +
       '      hasApiKey = msg.hasApiKey;' +
-      '      apiKeyStatus.textContent = hasApiKey ? "已配置" : "未配置";' +
-      '      providerDot.className = "status-dot " + (hasApiKey ? "green" : "yellow");' +
+      '      updateCapabilityUI(currentProviderVal, hasApiKey);' +
       '      providerBtns.forEach(function(b){b.classList.toggle("active",b.dataset.provider===currentProviderVal)});' +
       '      if (hasApiKey && currentProviderVal === "local") {' +
-      '        showToast("已检测到 API Key，可切换到 DeepSeek 获得智能总结","info");' +
+      '        showToast("已检测到 API Key，可切换到 DeepSeek 获得 AI 总结功能","info");' +
       '      }' +
       '      break;' +
       '    case "translated":' +
@@ -462,16 +518,15 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
       '      saveSettingsBtn.textContent = "保存";' +
       '      if (msg.success) {' +
       '        hasApiKey = true;' +
-      '        apiKeyStatus.textContent = "已配置";' +
-      '        providerDot.className = "status-dot green";' +
       '        currentProviderVal = msg.provider || "deepseek";' +
       '        currentProvider.textContent = currentProviderVal;' +
+      '        updateCapabilityUI(currentProviderVal, true);' +
       '        providerBtns.forEach(function(b){b.classList.toggle("active",b.dataset.provider===currentProviderVal)});' +
-      '        showToast("设置已保存，当前翻译源: " + currentProviderVal,"success");' +
+      '        showToast("设置已保存，已切换到 DeepSeek，翻译和 AI 总结均可使用","success");' +
       '      }' +
       '      break;' +
       '    case "providerSet":' +
-      '      showToast("已切换到 " + msg.provider,"success");' +
+      '      showToast("已切换到 " + providerName(msg.provider),"success");' +
       '      break;' +
       '    case "error":' +
       '      translateBtn.disabled = false;' +
@@ -490,7 +545,7 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
       '  toast.className = "toast " + type;' +
       '  toast.style.display = "block";' +
       '  clearTimeout(toastTimeout);' +
-      '  toastTimeout = setTimeout(function(){toast.style.display="none"},4000);' +
+      '  toastTimeout = setTimeout(function(){toast.style.display="none"},5000);' +
       '}' +
       'vscode.postMessage({type:"ready"});' +
       '</script>' +
