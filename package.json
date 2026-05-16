@@ -2,7 +2,7 @@
   "name": "ext-trans-picker",
   "displayName": "扩展选择助手",
   "description": "粘贴英文文本自动翻译为中文",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "honor-world",
   "license": "MIT",
   "activationEvents": [
