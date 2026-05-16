@@ -69,7 +69,7 @@
 4. 点击「安装」
 
 ### 手动安装
-1. 下载最新的 `.vsix` 文件从 [Releases](https://github.com/你的用户名/chinese-eyes/releases)
+1. 下载最新的 `.vsix` 文件从 [Releases](https://github.com/Gsaecy/Chinese-eyes/releases)
 2. 在 VS Code 中执行 `Extensions: Install from VSIX...` 命令
 3. 选择下载的文件
 
@@ -137,8 +137,8 @@ src/
 
 ```bash
 # 克隆仓库
-git clone https://github.com/你的用户名/chinese-eyes.git
-cd chinese-eyes
+git clone https://github.com/Gsaecy/Chinese-eyes.git
+cd Chinese-eyes
 
 # 安装依赖
 npm install
@@ -161,8 +161,8 @@ npm run package
 
 欢迎提交 Issue 和 Pull Request！
 
-- 🐛 发现 Bug？[提交 Issue](https://github.com/你的用户名/chinese-eyes/issues)
-- 💡 有想法？[发起讨论](https://github.com/你的用户名/chinese-eyes/discussions)
+- 🐛 发现 Bug？[提交 Issue](https://github.com/Gsaecy/Chinese-eyes/issues)
+- 💡 有想法？[发起讨论](https://github.com/Gsaecy/Chinese-eyes/discussions)
 
 ---
 
