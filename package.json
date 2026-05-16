@@ -22,7 +22,11 @@
     "中文"
   ],
   "main": "./out/extension.js",
-  "icon": "media/icon.svg",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Gsaecy/Chinese-eyes.git"
+  },
+  "icon": "media/icon.png",
   "contributes": {
     "configuration": {
       "type": "object",
@@ -32,7 +36,13 @@
           "type": "string",
           "default": "local",
           "description": "翻译提供商",
-          "enum": ["local", "deepl", "google", "libretranslate", "deepseek"],
+          "enum": [
+            "local",
+            "deepl",
+            "google",
+            "libretranslate",
+            "deepseek"
+          ],
           "order": 1
         },
         "chineseEyes.apiKey": {
@@ -63,7 +73,7 @@
         {
           "id": "chineseEyes-sidebar",
           "title": "CHINESE EYES",
-          "icon": "media/icon.svg"
+          "icon": "media/icon.png"
         }
       ]
     },
@@ -98,11 +108,12 @@
   "devDependencies": {
     "@types/node": "^18.0.0",
     "@types/vscode": "^1.85.0",
-    "typescript": "^5.3.0",
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
+    "@vscode/vsce": "^2.15.0",
     "eslint": "^8.0.0",
     "rimraf": "^5.0.0",
-    "@vscode/vsce": "^2.0.0"
+    "typescript": "^5.3.0",
+    "undici": "^5.28.4"
   }
 }
