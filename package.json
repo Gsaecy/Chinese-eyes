@@ -1,7 +1,7 @@
 {
   "name": "ext-trans-picker",
   "displayName": "扩展选择助手",
-  "description": "粘贴英文文本自动翻译为中文",
+  "description": "Paste English text, auto-translate to Chinese, AI summary for VS Code extensions",
   "version": "0.2.0",
   "publisher": "honor-world",
   "license": "MIT",
