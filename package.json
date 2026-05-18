@@ -2,11 +2,12 @@
   "name": "ext-trans-picker",
   "displayName": "扩展选择助手",
   "description": "浏览 VS Code 扩展市场，自动翻译详情为中文，AI 总结用途/收费/用法",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "honor-world",
   "license": "MIT",
   "activationEvents": [
-    "onStartupFinished"
+    "onCommand:chineseEyes.openPanel",
+    "onCommand:chineseEyes.openSettings"
   ],
   "engines": {
     "vscode": "^1.85.0"
@@ -143,6 +144,6 @@
     "eslint": "^8.0.0",
     "rimraf": "^5.0.0",
     "typescript": "^5.3.0",
-    "undici": "^5.28.4"
+    "undici": "^8.3.0"
   }
 }

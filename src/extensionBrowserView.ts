@@ -34,13 +34,21 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
-    this._view = webviewView;
-    webviewView.webview.options = {
-      enableScripts: true,
-      localResourceRoots: [this._extensionUri],
-    };
-    webviewView.webview.html = this.buildHtml(webviewView.webview);
-    webviewView.webview.onDidReceiveMessage((m) => this.handleMessage(m));
+    console.log('[chineseEyes] resolveWebviewView 开始');
+    try {
+      this._view = webviewView;
+      webviewView.webview.options = {
+        enableScripts: true,
+        localResourceRoots: [this._extensionUri],
+      };
+      console.log('[chineseEyes] resolveWebviewView 设置 HTML');
+      webviewView.webview.html = this.buildHtml(webviewView.webview);
+      console.log('[chineseEyes] resolveWebviewView 设置消息监听');
+      webviewView.webview.onDidReceiveMessage((m) => this.handleMessage(m));
+      console.log('[chineseEyes] resolveWebviewView 完成');
+    } catch (err) {
+      console.error('[chineseEyes] resolveWebviewView 异常:', err);
+    }
   }
 
   private syncConfig(): TranslationConfig {
@@ -68,8 +76,9 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
             canSummarize: this._translator.canSummarize(),
             pageSize: vscode.workspace.getConfiguration('chineseEyes').get('pageSize', 20),
           });
+          // 不再自动加载扩展，显示欢迎页让用户点击按钮再加载
           if (this._items.length === 0) {
-            await this.doSearch('', true);
+            this.postMessage({ type: 'welcome' });
           } else {
             this.postMessage({
               type: 'searchResults',
@@ -81,6 +90,19 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
           }
           break;
         }
+
+        case 'getSettings': {
+          const config = vscode.workspace.getConfiguration('chineseEyes');
+          this.postMessage({
+            type: 'settingsData',
+            provider: config.get('translationProvider', 'local'),
+            apiKey: config.get('apiKey', ''),
+            endpoint: config.get('apiEndpoint', ''),
+            model: config.get('apiModel', ''),
+          });
+          break;
+        }
+
 
         case 'search':
           this._query = (msg.query || '').trim();
@@ -169,6 +191,20 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
 
   private async doSearch(query: string, reset: boolean): Promise<void> {
     if (this._loading) return;
+
+    // Guard: LLM 翻译需要 API Key，用户没配置就不应该发请求
+    if (this._translator.isLLMProvider()) {
+      const config = vscode.workspace.getConfiguration('chineseEyes');
+      if (!config.get('apiKey', '').trim()) {
+        this.postMessage({
+          type: 'error',
+          message: '请先在「⚙ 设置」中配置 API Key，再进行搜索。',
+        });
+        this._loading = false;
+        return;
+      }
+    }
+
     this._loading = true;
     if (reset) {
       this._items = [];
@@ -202,42 +238,11 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
       });
 
       this._page += 1;
-
-      // 异步翻译这一批的描述
-      this.translateDescriptionsAsync(newItems).catch((e) =>
-        console.warn('[chineseEyes] 翻译描述失败:', e)
-      );
     } catch (err: any) {
       console.error('[chineseEyes] 搜索失败:', err);
       this.postMessage({ type: 'error', message: '搜索失败: ' + (err.message || String(err)) });
     } finally {
       this._loading = false;
-    }
-  }
-
-  private async translateDescriptionsAsync(items: ExtensionItem[]): Promise<void> {
-    if (items.length === 0) return;
-    const provider = this._translator.isLLMProvider();
-    const config = vscode.workspace.getConfiguration('chineseEyes');
-    const apiKey = config.get('apiKey', '');
-    // 仅 LLM 翻译需要 key；本地词典/其他翻译源照常调用
-    if (provider && !apiKey) return;
-
-    const texts = items.map((i) => i.description).filter((t) => t && t.trim());
-    if (texts.length === 0) return;
-
-    try {
-      const trans = await this._translator.translateBatch(texts);
-      const map: Record<string, string> = {};
-      for (const item of items) {
-        const t = trans[item.description];
-        if (t && t !== item.description) {
-          map[item.id] = t;
-        }
-      }
-      this.postMessage({ type: 'descriptionsTranslated', map });
-    } catch (e) {
-      console.warn('[chineseEyes] 翻译描述失败:', e);
     }
   }
 
@@ -346,6 +351,11 @@ body{font-family:var(--vscode-font-family);font-size:13px;color:var(--fg);backgr
 .toast.success{background:var(--success);color:#fff}
 .toast.error{background:var(--error);color:#fff}
 .toast.info{background:var(--btn);color:var(--btn-fg)}
+.welcome-area{display:flex;align-items:center;justify-content:center;height:300px;text-align:center}
+.welcome-content h2{font-size:18px;margin-bottom:10px;color:var(--fg)}
+.welcome-content p{font-size:13px;color:var(--sub);margin-bottom:20px}
+.primary-btn{padding:10px 24px;background:var(--btn);color:var(--btn-fg);border:none;border-radius:6px;cursor:pointer;font-size:14px;font-weight:600}
+.primary-btn:hover{background:var(--btn-hover)}
 </style>
 </head>
 <body>
@@ -368,7 +378,17 @@ body{font-family:var(--vscode-font-family);font-size:13px;color:var(--fg);backgr
 </div>
 
 <div id="listArea">
-  <div class="empty">输入关键词搜索，或加载热门扩展…</div>
+  <div class="welcome-area" id="welcomeArea">
+    <div class="welcome-content">
+      <h2>👋 欢迎使用扩展选择助手</h2>
+      <p>AI 智能总结 + 翻译，帮助你快速了解 VS Code 扩展</p>
+      <button id="loadExtensionsBtn" class="primary-btn">📦 浏览扩展</button>
+      <div style="margin-top:16px;font-size:12px;color:var(--sub)">
+        <strong style="color:var(--warning)">⚠️ 首次使用请先配置 API Key</strong><br>
+        点击右上角 ⚙ 设置 → 选择 DeepSeek/OpenAI 兼容 → 填入 Key
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="settings-area" id="settingsArea">
@@ -495,12 +515,6 @@ function renderList(){
     const iconHtml = item.iconUrl
       ? '<img class="icon" src="' + esc(item.iconUrl) + '" alt="' + esc((item.displayName || '?').slice(0,1)) + '">'
       : '<div class="icon-fallback">' + esc((item.displayName || '?').slice(0,1).toUpperCase()) + '</div>';
-    const descZh = state.descMap[item.id];
-    const descZhHtml = descZh
-      ? '<div class="desc-zh">' + esc(descZh) + '</div>'
-      : (state.provider !== 'local' && state.hasApiKey
-        ? '<div class="desc-zh loading">翻译中…</div>'
-        : '');
     parts.push(
       '<div class="card" data-id="' + esc(item.id) + '">'
       + iconHtml
@@ -508,7 +522,6 @@ function renderList(){
         + '<div class="title">' + esc(item.displayName) + '</div>'
         + '<div class="publisher">' + esc(item.publisherDisplayName || item.publisher) + ' · v' + esc(item.version) + '</div>'
         + (item.description ? '<div class="desc">' + esc(item.description) + '</div>' : '')
-        + descZhHtml
         + '<div class="meta">'
           + badge
           + '<span>⬇ ' + fmtCount(item.installCount) + '</span>'
@@ -584,12 +597,19 @@ sortChips.forEach((chip) => {
 settingsBtn.addEventListener('click', () => {
   settingsArea.classList.toggle('show');
   if (settingsArea.classList.contains('show')){
-    providerSelect.value = state.provider;
-    apiKeyInput.value = '';
-    endpointInput.value = '';
-    modelInput.value = '';
+    // 从后端获取真实配置值
+    vscode.postMessage({type:'getSettings'});
   }
 });
+
+const loadExtensionsBtn = el('loadExtensionsBtn');
+if (loadExtensionsBtn) {
+  loadExtensionsBtn.addEventListener('click', () => {
+    loadExtensionsBtn.disabled = true;
+    loadExtensionsBtn.textContent = '加载中…';
+    vscode.postMessage({type:'search', query: ''});
+  });
+}
 closeSettings.addEventListener('click', () => settingsArea.classList.remove('show'));
 saveSettingsBtn.addEventListener('click', () => {
   saveSettingsBtn.disabled = true;
@@ -621,6 +641,13 @@ window.addEventListener('message', (event) => {
       renderCapability();
       sortChips.forEach((c) => c.classList.toggle('active', c.getAttribute('data-sort') === state.sortBy));
       break;
+    case 'welcome':
+      // 显示欢迎页，搜索按钮被禁用状态
+      if (loadExtensionsBtn) {
+        loadExtensionsBtn.disabled = false;
+        loadExtensionsBtn.textContent = '📦 浏览扩展';
+      }
+      break;
     case 'loading':
       state.loading = true;
       showLoading(msg.append);
@@ -635,6 +662,13 @@ window.addEventListener('message', (event) => {
     case 'descriptionsTranslated':
       Object.assign(state.descMap, msg.map || {});
       renderList();
+      break;
+    case 'settingsData':
+      // 从后端获取到真实配置值，填充设置面板
+      providerSelect.value = msg.provider || 'local';
+      apiKeyInput.value = msg.apiKey || '';
+      endpointInput.value = msg.endpoint || '';
+      modelInput.value = msg.model || '';
       break;
     case 'settingsSaved':
       saveSettingsBtn.disabled = false;
@@ -653,7 +687,20 @@ window.addEventListener('message', (event) => {
       saveSettingsBtn.disabled = false;
       saveSettingsBtn.textContent = '保存';
       showToast(msg.message, 'error');
+      // 搜索失败后恢复欢迎页，让用户可以重试
+      if (state.items.length === 0) {
+        listArea.innerHTML = '<div class="welcome-area"><div class="welcome-content"><h2>👋 欢迎使用扩展选择助手</h2><p>AI 智能总结 + 翻译，帮助你快速了解 VS Code 扩展</p><button id="loadExtensionsBtn" class="primary-btn">📦 浏览扩展</button><div style="margin-top:16px;font-size:12px;color:var(--sub)"><strong style="color:var(--warning)">⚠️ 首次使用请先配置 API Key</strong><br>点击右上角 ⚙ 设置 → 选择 DeepSeek/OpenAI 兼容 → 填入 Key</div></div></div>';
+        const newLoadBtn = document.getElementById('loadExtensionsBtn');
+        if (newLoadBtn) {
+          newLoadBtn.addEventListener('click', () => {
+            newLoadBtn.disabled = true;
+            newLoadBtn.textContent = '加载中…';
+            vscode.postMessage({type:'search', query: ''});
+          });
+        }
+      }
       break;
+
   }
 });
 

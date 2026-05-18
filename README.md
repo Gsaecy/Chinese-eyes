@@ -1,6 +1,7 @@
 # 🇨🇳 扩展选择助手 — 看透外文，一目了然
 
-> **把英文 VS Code 扩展翻译成中文，让不擅长英语的用户也能轻松看懂扩展的功能和收费信息。**
+> **浏览 VS Code 扩展市场，自动翻译扩展详情为中文，AI 总结用途/收费/用法。**
+> **让不擅长英语的用户也能轻松看懂扩展的功能和收费信息。**
 
 ![Visual Studio Marketplace Version](https://img.shields.io/visual-studio-marketplace/v/ext-trans-picker.ext-trans-picker)
 ![Visual Studio Marketplace Installs](https://img.shields.io/visual-studio-marketplace/i/ext-trans-picker.ext-trans-picker)
@@ -10,23 +11,35 @@
 
 ## 📺 演示
 
-| 粘贴文本 | 自动翻译 | AI 总结 |
-|---------|---------|---------|
-| 粘贴英文扩展描述/README | 自动翻译为中文 | 总结：有什么用 · 收不收费 · 怎么用 |
+| 浏览扩展市场 | 自动翻译 | AI 总结 |
+|-------------|---------|---------|
+| 在侧边栏直接搜索 VS Code 扩展市场 | 扩展描述自动翻译为中文 | 总结：有什么用 · 收不收费 · 怎么用 |
 
 ---
 
 ## ✨ 主要功能
 
-### 1. 粘贴 → 翻译
-在侧边栏粘贴任意英文文本（扩展描述、README、说明文档等），一键翻译为中文。
+### 1. 🏪 浏览扩展市场
+在侧边栏直接搜索和浏览 VS Code 扩展市场，无需离开编辑器：
+- 搜索扩展名或关键词
+- 按热门/评分/最新/相关排序
+- 分页加载更多
+- 查看扩展图标、描述、评分、下载量
+- 一键安装或打开市场页面
 
-### 2. AI 总结（一键看懂）
-翻译完成后，点击「AI 总结」按钮，自动分析原文生成三段式中文总结：
+### 2. 🌐 自动翻译
+扩展描述自动翻译为中文，支持多种翻译源：
+- **本地词典**：离线可用，无需 API Key
+- **DeepSeek**：AI 翻译（推荐）
+- **OpenAI 兼容**：支持任意 OpenAI 兼容 API
+- **DeepL / Google / LibreTranslate**：专业翻译引擎
+
+### 3. 🤖 AI 总结（一键看懂）
+点击「AI 总结」按钮，自动分析扩展生成三段式中文总结：
 
 | 段落 | 说明 |
 |------|------|
-| 🔧 **有什么用** | 大白话说清楚这个扩展/工具的主要功能 |
+| 🔧 **有什么用** | 大白话说清楚这个扩展的主要功能 |
 | 💰 **收不收费** | 明确是否收费，多少钱，有什么限制 |
 | 📖 **怎么用** | 安装后如何使用，简单几步 |
 
@@ -42,21 +55,17 @@
 > 安装后在 VS Code 中按 `Ctrl+Shift+P` → 输入 "Format" 即可使用。
 > ```
 
-### 3. 多翻译源支持
+### 4. 💰 收费标识
+扩展卡片上自动标注收费状态：
+- 🟢 **免费**：完全免费
+- 🟡 **可能付费**：包含付费标签，需进一步确认
+- 🔴 **付费**：明确需要付费使用
 
-| 翻译源 | 是否需要 API Key | 说明 |
-|--------|-----------------|------|
-| **本地词典** | ❌ 不需要 | 内置英→中词表，离线可用，适合短文本 |
-| **DeepSeek** | ✅ 需要 | AI 翻译 + 智能总结（推荐） |
-| **DeepL** | ✅ 需要 | 专业翻译引擎 |
-| **Google** | ✅ 需要 | Google 翻译 |
-| **LibreTranslate** | ✅ 可选 | 自托管翻译服务 |
-
-### 4. 收费标识
-翻译过程中自动检测原文中的付费关键词（paid、pricing、subscription、trial、premium 等），在译文末尾标注 ⚠️ 提醒。
-
-### 5. API Key 管理
-在扩展 UI 内直接输入 API Key，无需去 VS Code 设置页面翻找。
+### 5. ⚙️ 内置设置面板
+在扩展 UI 内直接配置，无需去 VS Code 设置页面翻找：
+- 选择翻译提供商
+- 输入 API Key
+- 配置自定义 Endpoint 和模型
 
 ---
 
@@ -81,19 +90,19 @@
 - 点击左侧活动栏的 🇨🇳 扩展选择助手图标
 - 或按 `Ctrl+Shift+P` → 输入「扩展选择助手」
 
-### 第二步：粘贴并翻译
-1. 复制扩展市场的英文描述或 README
-2. 粘贴到输入框
-3. 点击「翻译」按钮
+### 第二步：浏览扩展
+1. 点击「📦 浏览扩展」按钮加载热门扩展
+2. 或在搜索框输入关键词搜索
+3. 点击扩展卡片上的「详情」查看完整介绍
 
 ### 第三步：AI 总结（可选）
-翻译完成后，点击「AI 总结」按钮获得三段式中文总结。
+点击扩展卡片上的「AI 总结」按钮获得三段式中文总结。
 
-### 配置 DeepSeek API Key（推荐获取智能总结）
-1. 在面板中点击「设置」按钮
-2. 输入你的 DeepSeek API Key
-3. 点击「保存」
-4. 自动切换到 DeepSeek 翻译源
+### 配置 API Key（推荐获取智能总结）
+1. 在面板中点击右上角 ⚙ 设置按钮
+2. 选择 DeepSeek 或 OpenAI 兼容
+3. 输入你的 API Key
+4. 点击「保存」
 
 > 💡 **没有 API Key？** 没关系！本地词典模式可以直接翻译，AI 总结会用内置规则做基础总结，虽然不如 AI 精准，但也能用。
 
@@ -103,10 +112,12 @@
 
 | 配置名 | 类型 | 默认值 | 说明 |
 |--------|------|--------|------|
-| `chineseEyes.translationProvider` | string | `local` | 翻译源：`local` / `deepl` / `google` / `libretranslate` / `deepseek` |
-| `chineseEyes.apiKey` | string | `""` | API 密钥（DeepSeek/DeepL/Google） |
+| `chineseEyes.translationProvider` | string | `local` | 翻译源：`local` / `deepl` / `google` / `libretranslate` / `deepseek` / `openai-compatible` |
+| `chineseEyes.apiKey` | string | `""` | API 密钥（DeepSeek/DeepL/Google/OpenAI 兼容） |
 | `chineseEyes.apiEndpoint` | string | `""` | 自定义 API 端点 |
-| `chineseEyes.apiModel` | string | `""` | 自定义模型名称（如 `deepseek-chat`） |
+| `chineseEyes.apiModel` | string | `""` | 自定义模型名称（如 `deepseek-chat`、`gpt-4o-mini`） |
+| `chineseEyes.autoTranslateReadme` | boolean | `true` | 打开扩展详情时自动翻译 README 内容 |
+| `chineseEyes.pageSize` | number | `20` | 扩展列表每页显示数量 |
 
 ---
 
@@ -115,16 +126,17 @@
 ```
 src/
 ├── extension.ts              # 扩展入口，注册侧边栏视图
-├── extensionBrowserView.ts   # 翻译面板 UI + 消息处理 + AI 总结
-├── translator.ts             # 翻译引擎（本地词典 / DeepL / Google / Libre / DeepSeek）
+├── extensionBrowserView.ts   # 扩展市场浏览面板 UI + 消息处理
+├── extensionDetailPanel.ts   # 扩展详情面板（翻译 + AI 总结）
+├── translator.ts             # 翻译引擎（本地词典 / DeepL / Google / Libre / DeepSeek / OpenAI 兼容）
+├── marketplaceApi.ts         # VS Code 市场 API 封装
 ├── tlsCompat.ts              # TLS 兼容层（解决 Windows 证书问题）
-├── marketplaceApi.ts         # (保留) VS Code 市场 API
 └── types.ts                  # 类型定义
 ```
 
 ### 翻译流程
 ```
-用户粘贴文本 → 选择翻译源 → Translator.translate()
+用户浏览扩展 → 获取扩展列表 → 自动翻译描述
   ├── 本地词典：词表替换 + 关键词检测 → 结果
   ├── DeepSeek：API 调用 + AI 翻译 → 结果
   ├── DeepL/Google/Libre：HTTP 请求 → 结果

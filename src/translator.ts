@@ -1,8 +1,3 @@
-import * as https from 'https';
-import * as http from 'http';
-import * as zlib from 'zlib';
-import { createSafeHttpsAgent } from './tlsCompat';
-
 export interface TranslationConfig {
   provider: string;
   apiKey?: string;
@@ -11,9 +6,14 @@ export interface TranslationConfig {
   customModel?: string;
 }
 
+interface LLMConfig {
+  endpoint: string;
+  model: string;
+}
+
 /**
  * 翻译服务模块
- * 支持 local（内置本地翻译）、DeepL、Google、LibreTranslate
+ * 支持 local（内置本地翻译）、DeepL、Google、LibreTranslate、LLM（DeepSeek/OpenAI 兼容）
  */
 export class Translator {
   private cache = new Map<string, string>();
@@ -75,8 +75,7 @@ export class Translator {
 
   /**
    * 翻译一段较长的 Markdown 文本（如 README）。
-   * 不使用 SEP 分隔策略，让 LLM 直接输出中文 Markdown，保留原结构。
-   * 当 provider 不是 LLM 时，回退到本地词典逐段处理。
+   * LLM provider 时直接调用 LLM 输出中文 Markdown；否则回退本地词典。
    */
   async translateMarkdown(markdown: string): Promise<string> {
     if (!markdown || !markdown.trim()) return markdown;
@@ -85,14 +84,7 @@ export class Translator {
       return localTranslate(markdown);
     }
 
-    const defaultEndpoint = this.config.provider === 'deepseek'
-      ? 'https://api.deepseek.com'
-      : 'https://api.openai.com';
-    const defaultModel = this.config.provider === 'deepseek'
-      ? 'deepseek-chat'
-      : 'gpt-4o-mini';
-    const endpoint = (this.config.customEndpoint || defaultEndpoint).replace(/\/+$/, '');
-    const model = this.config.customModel || defaultModel;
+    const { endpoint, model } = this.resolveLLMConfig();
 
     const systemPrompt = [
       '你是一个专业的 Markdown 翻译器，把英文 Markdown 文档翻译成简体中文 Markdown。',
@@ -105,34 +97,143 @@ export class Translator {
       '6. 对涉及收费的句子（含 paid/pricing/subscription/trial/premium/license/billing 等），在该句末尾追加 ⚠️',
     ].join('\n');
 
-    const response = await httpsPost(
-      `${endpoint}/v1/chat/completions`,
-      JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: markdown.substring(0, 16000) },
-        ],
-        temperature: 0.1,
-        max_tokens: 6000,
-      }),
-      {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.config.apiKey}`,
-      }
-    );
-
-    const result = JSON.parse(response);
-    if (result.error) {
-      throw new Error(result.error.message || JSON.stringify(result.error));
-    }
-    const out = result.choices?.[0]?.message?.content;
+    const out = await this.chatCompletion(endpoint, model, systemPrompt, markdown.substring(0, 16000), 0.1, 6000);
     if (!out) throw new Error('翻译返回为空');
-    return String(out).trim();
+    return out;
   }
 
   clearCache(): void {
     this.cache.clear();
+  }
+
+  /** 是否支持 AI 总结 */
+  canSummarize(): boolean {
+    return this.isLLMProvider() && !!this.config.apiKey;
+  }
+
+  /** 是否使用了基于 LLM 的翻译（具备智能翻译能力） */
+  isLLMProvider(): boolean {
+    return this.config.provider === 'deepseek' || this.config.provider === 'openai-compatible';
+  }
+
+  /**
+   * 调用 LLM 进行中文 AI 总结
+   */
+  async summarize(content: string, customSystemPrompt?: string): Promise<string> {
+    this.ensureCanSummarize();
+    const { endpoint, model } = this.resolveLLMConfig();
+
+    const systemPrompt = customSystemPrompt || [
+      '你是一个 VS Code 扩展说明助手。',
+      '请用中文对用户提供的扩展介绍/README 进行总结，面向不懂英语的普通用户。',
+      '总结必须包含以下三部分，使用 Markdown 标题：',
+      '## 有什么用',
+      '用大白话说明扩展的核心功能、解决什么问题。',
+      '## 收不收费',
+      '明确告知是否需要付费、价格、限制；若原文未提及则写「未明确说明，可能是免费的」。',
+      '## 怎么用',
+      '安装后如何启用，用 1-4 个步骤简明说明。',
+      '注意：',
+      '- 通俗易懂，不堆专业术语',
+      '- 直接输出 Markdown，不要包装在 ```markdown 代码块中',
+      '- 不要前置寒暄，开头就是 ## 标题',
+    ].join('\n');
+
+    const text = await this.chatCompletion(endpoint, model, systemPrompt, content.substring(0, 12000), 0.2, 1200);
+    if (!text) throw new Error('AI 返回为空');
+    return text;
+  }
+
+  /**
+   * 用英文生成 AI 总结
+   */
+  async summarizeEn(content: string): Promise<string> {
+    this.ensureCanSummarize();
+    const { endpoint, model } = this.resolveLLMConfig();
+
+    const systemPrompt = [
+      'You are a VS Code extension documentation assistant.',
+      'Summarize the provided extension introduction/README in English.',
+      'The summary MUST contain these three sections using Markdown headings:',
+      '## What it does',
+      'Explain the core functionality and what problem it solves in plain English.',
+      '## Pricing',
+      'Clearly state if it requires payment, pricing, limitations; if not mentioned, write "Not specified, may be free".',
+      '## How to use',
+      'Explain how to enable it after installation in 1-4 concise steps.',
+      'Notes:',
+      '- Be easy to understand, avoid jargon',
+      '- Output Markdown directly, do not wrap in ```markdown code blocks',
+      '- Do not start with pleasantries, start directly with ## heading',
+    ].join('\n');
+
+    const text = await this.chatCompletion(endpoint, model, systemPrompt, content.substring(0, 12000), 0.2, 1200);
+    if (!text) throw new Error('AI 返回为空');
+    return text;
+  }
+
+  // ========== private helpers ==========
+
+  private ensureCanSummarize(): void {
+    if (!this.canSummarize()) {
+      throw new Error('当前翻译源不支持 AI 总结，请切换到 DeepSeek 或 OpenAI 兼容并配置 API Key');
+    }
+  }
+
+  /** 统一的 LLM endpoint/model 解析，消除 translateMarkdown/summarize/summarizeEn 中的重复代码 */
+  private resolveLLMConfig(): LLMConfig {
+    const defaultEndpoint = this.config.provider === 'deepseek'
+      ? 'https://api.deepseek.com'
+      : 'https://api.openai.com';
+    const defaultModel = this.config.provider === 'deepseek'
+      ? 'deepseek-chat'
+      : 'gpt-4o-mini';
+    return {
+      endpoint: (this.config.customEndpoint || defaultEndpoint).replace(/\/+$/, ''),
+      model: this.config.customModel || defaultModel,
+    };
+  }
+
+  /** 统一 LLM 调用 */
+  private async chatCompletion(
+    endpoint: string,
+    model: string,
+    systemPrompt: string,
+    userContent: string,
+    temperature: number,
+    maxTokens: number,
+    timeoutMs: number = 30000,
+  ): Promise<string> {
+    const response = await fetchWithTimeout(
+      `${endpoint}/v1/chat/completions`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userContent },
+          ],
+          temperature,
+          max_tokens: maxTokens,
+        }),
+      },
+      timeoutMs,
+    );
+
+    const result = await response.json() as {
+      error?: { message?: string };
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    if (result.error) {
+      throw new Error(result.error.message || JSON.stringify(result.error));
+    }
+    const out: string | undefined = result.choices?.[0]?.message?.content;
+    return out ? String(out).trim() : '';
   }
 
   private async callTranslationAPI(texts: string[]): Promise<string[]> {
@@ -155,122 +256,65 @@ export class Translator {
     }
   }
 
-  /** 是否支持 AI 总结 */
-  canSummarize(): boolean {
-    return (this.config.provider === 'deepseek' || this.config.provider === 'openai-compatible')
-      && !!this.config.apiKey;
-  }
-
-  /** 是否使用了基于 LLM 的翻译（具备智能翻译能力） */
-  isLLMProvider(): boolean {
-    return this.config.provider === 'deepseek' || this.config.provider === 'openai-compatible';
-  }
-
-  /**
-   * 调用 LLM 进行 AI 总结（无翻译流程，直接 system+user 提示）
-   * 仅在 provider 为 deepseek 或 openai-compatible 时可用
-   */
-  async summarize(content: string, customSystemPrompt?: string): Promise<string> {
-    if (!this.canSummarize()) {
-      throw new Error('当前翻译源不支持 AI 总结，请切换到 DeepSeek 或 OpenAI 兼容并配置 API Key');
-    }
-    const defaultEndpoint = this.config.provider === 'deepseek'
-      ? 'https://api.deepseek.com'
-      : 'https://api.openai.com';
-    const defaultModel = this.config.provider === 'deepseek'
-      ? 'deepseek-chat'
-      : 'gpt-4o-mini';
-    const endpoint = (this.config.customEndpoint || defaultEndpoint).replace(/\/+$/, '');
-    const model = this.config.customModel || defaultModel;
-
-    const systemPrompt = customSystemPrompt || [
-      '你是一个 VS Code 扩展说明助手。',
-      '请用中文对用户提供的扩展介绍/README 进行总结，面向不懂英语的普通用户。',
-      '总结必须包含以下三部分，使用 Markdown 标题：',
-      '## 有什么用',
-      '用大白话说明扩展的核心功能、解决什么问题。',
-      '## 收不收费',
-      '明确告知是否需要付费、价格、限制；若原文未提及则写「未明确说明，可能是免费的」。',
-      '## 怎么用',
-      '安装后如何启用，用 1-4 个步骤简明说明。',
-      '注意：',
-      '- 通俗易懂，不堆专业术语',
-      '- 直接输出 Markdown，不要包装在 ```markdown 代码块中',
-      '- 不要前置寒暄，开头就是 ## 标题',
-    ].join('\n');
-
-    const response = await httpsPost(
-      `${endpoint}/v1/chat/completions`,
-      JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: content.substring(0, 12000) },
-        ],
-        temperature: 0.2,
-        max_tokens: 1200,
-      }),
-      {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.config.apiKey}`,
-      }
-    );
-
-    const result = JSON.parse(response);
-    if (result.error) {
-      throw new Error(result.error.message || JSON.stringify(result.error));
-    }
-    const text = result.choices?.[0]?.message?.content;
-    if (!text) throw new Error('AI 返回为空');
-    return String(text).trim();
-  }
-
   private async translateDeepL(texts: string[]): Promise<string[]> {
     const apiKey = this.config.apiKey;
     if (!apiKey) throw new Error('请配置 DeepL API Key');
     const text = texts.join('\n<<<SEP>>>\n');
-    const response = await httpsPost(
+    const response = await fetchWithTimeout(
       'https://api-free.deepl.com/v2/translate',
-      JSON.stringify({ text: [text], target_lang: 'ZH' }),
       {
-        'Content-Type': 'application/json',
-        'Authorization': `DeepL-Auth-Key ${apiKey}`,
-      }
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `DeepL-Auth-Key ${apiKey}`,
+        },
+        body: JSON.stringify({ text: [text], target_lang: 'ZH' }),
+      },
+      15000,
     );
-    const result = JSON.parse(response);
+    const result = await response.json() as any;
     return (result.translations?.[0]?.text ?? text).split('\n<<<SEP>>>\n');
   }
 
   private async translateGoogle(texts: string[]): Promise<string[]> {
     const apiKey = this.config.apiKey;
     if (!apiKey) throw new Error('请配置 Google API Key');
-    const response = await httpsPost(
+    const response = await fetchWithTimeout(
       `https://translation.googleapis.com/language/translate/v2?key=${apiKey}`,
-      JSON.stringify({ q: texts, target: 'zh-CN' }),
-      { 'Content-Type': 'application/json' }
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ q: texts, target: 'zh-CN' }),
+      },
+      15000,
     );
-    const result = JSON.parse(response);
+    const result = await response.json() as any;
     return result.data?.translations?.map((t: any) => t.translatedText) ?? texts;
   }
 
   private async translateLibre(texts: string[]): Promise<string[]> {
     const endpoint = this.config.customEndpoint || 'https://libretranslate.com';
-    const response = await httpsPost(
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (this.config.apiKey) {
+      headers['Authorization'] = `Bearer ${this.config.apiKey}`;
+    }
+    const response = await fetchWithTimeout(
       `${endpoint}/translate`,
-      JSON.stringify({ q: texts.join('\n<<<SEP>>>\n'), source: 'en', target: 'zh', format: 'text' }),
       {
-        'Content-Type': 'application/json',
-        ...(this.config.apiKey ? { Authorization: `Bearer ${this.config.apiKey}` } : {}),
-      }
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ q: texts.join('\n<<<SEP>>>\n'), source: 'en', target: 'zh', format: 'text' }),
+      },
+      15000,
     );
-    const result = JSON.parse(response);
+    const result = await response.json() as any;
     return (result.translatedText ?? texts.join('\n<<<SEP>>>\n')).split('\n<<<SEP>>>\n');
   }
 
   private async translateOpenAILike(
     texts: string[],
     defaultEndpoint: string,
-    defaultModel: string
+    defaultModel: string,
   ): Promise<string[]> {
     const apiKey = this.config.apiKey;
     if (!apiKey) throw new Error('请配置 API Key');
@@ -291,29 +335,8 @@ export class Translator {
       '7. 对收费关键词（paid, pricing, subscription 等）在译文末尾附加 ⚠️[付费]',
     ].join('\n');
 
-    const response = await httpsPost(
-      `${endpoint}/v1/chat/completions`,
-      JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: toTranslate },
-        ],
-        temperature: 0.1,
-        max_tokens: 4096,
-      }),
-      {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      }
-    );
-
-    const result = JSON.parse(response);
-    if (result.error) {
-      throw new Error(result.error.message || JSON.stringify(result.error));
-    }
-    const translated = result.choices?.[0]?.message?.content ?? toTranslate;
-    return translated.split('<<<SEP>>>').map((t: string) => t.trim());
+    const out = await this.chatCompletion(endpoint, model, systemPrompt, toTranslate, 0.1, 4096, 15000);
+    return out.split('<<<SEP>>>').map((t: string) => t.trim());
   }
 }
 
@@ -609,6 +632,18 @@ const DICT: Record<string, string> = {
   'activation': '激活',
 };
 
+// 模块加载时预排序：长词优先 → 每次 localTranslate 不再排序，O(1) 开销
+const SORTED_ENTRIES: [string, string][] = Object.entries(DICT)
+  .sort((a, b) => b[0].length - a[0].length);
+
+const PAID_KEYS = new Set([
+  'paid', 'pricing', 'subscription', 'billing', 'purchase',
+  'monthly', 'annually', 'per seat', 'per user', 'per month',
+  'starting at', 'starts at', 'freemium', 'trial', 'pro',
+  'premium', 'enterprise', 'limited', 'restrictions',
+  'watermark', 'ads', 'commercial',
+]);
+
 function localTranslate(text: string): string {
   if (!text || !text.trim()) return text;
 
@@ -627,27 +662,17 @@ function localTranslate(text: string): string {
   // 检测收费关键词
   let paidWarning = '';
   const lowerText = text.toLowerCase();
-  const paidKeys = [
-    'paid', 'pricing', 'subscription', 'billing', 'purchase',
-    'monthly', 'annually', 'per seat', 'per user', 'per month',
-    'starting at', 'starts at', 'freemium', 'trial', 'pro',
-    'premium', 'enterprise', 'limited', 'restrictions',
-    'watermark', 'ads', 'commercial',
-  ];
-  for (const kw of paidKeys) {
+  for (const kw of PAID_KEYS) {
     if (lowerText.includes(kw)) {
       paidWarning = ' ⚠️[注意收费]';
       break;
     }
   }
 
-  // 长词优先替换
+  // 长词优先替换（使用预排序数组）
   let result = text;
-  const entries = Object.entries(DICT);
-  entries.sort((a, b) => b[0].length - a[0].length);
-
-  for (const [en, zh] of entries) {
-    if (zh === en) continue; // 品牌名保持原文
+  for (const [en, zh] of SORTED_ENTRIES) {
+    if (zh === en) continue;
     if (en.length <= 2) continue;
     const regex = new RegExp(`\\b${escapeRegExp(en)}\\b`, 'g');
     let changed = false;
@@ -666,60 +691,29 @@ function escapeRegExp(str: string): string {
 }
 
 // ============================================================
-//  HTTP 辅助
+//  HTTP 辅助 —— 用 Node 18+ 原生 fetch 替代手写 httpRequest
 // ============================================================
 
-function httpsPost(
+async function fetchWithTimeout(
   url: string,
-  data: string,
-  headers: Record<string, string>
-): Promise<string> {
-  return httpRequest(url, 'POST', data, headers, true);
-}
-
-function httpRequest(
-  url: string,
-  method: string,
-  data: string,
-  headers: Record<string, string>,
-  useHttps: boolean
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const urlObj = new URL(url);
-    const mod = useHttps ? https : http;
-
-    // macOS/Linux 使用 Node 默认 HTTPS Agent，避免自定义 TLS 干扰 API 调用
-    const isMacOrLinux = process.platform !== 'win32';
-    const agent = useHttps && !isMacOrLinux ? createSafeHttpsAgent() : undefined;
-
-    const options: https.RequestOptions = {
-      hostname: urlObj.hostname,
-      path: urlObj.pathname + urlObj.search,
-      port: urlObj.port || (useHttps ? 443 : 80),
-      method,
-      headers: { ...headers, 'Content-Length': Buffer.byteLength(data) },
-      timeout: 30000,
-      agent,
-    };
-
-    const req = mod.request(options, (res: http.IncomingMessage) => {
-      const chunks: Buffer[] = [];
-      res.on('data', (chunk: Buffer) => chunks.push(chunk));
-      res.on('end', () => {
-        let result: Buffer = Buffer.concat(chunks);
-        const enc = res.headers['content-encoding'];
-        if (enc === 'gzip') {
-          try { result = zlib.gunzipSync(result) as Buffer; } catch (e) { reject(e); return; }
-        } else if (enc === 'deflate') {
-          try { result = zlib.inflateSync(result) as Buffer; } catch (e) { reject(e); return; }
-        }
-        resolve(result.toString('utf-8'));
-      });
-    });
-
-    req.on('error', reject);
-    req.on('timeout', () => { req.destroy(); reject(new Error('请求超时')); });
-    req.write(data);
-    req.end();
-  });
+  init: RequestInit,
+  timeoutMs: number = 15000,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      throw new Error(`HTTP ${response.status}: ${body.slice(0, 200)}`);
+    }
+    return response;
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      throw new Error(`请求超时 (${timeoutMs}ms): ${url}`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }

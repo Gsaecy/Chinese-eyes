@@ -59,8 +59,9 @@ export function activate(context: vscode.ExtensionContext) {
 
     console.log('[chineseEyes] 激活完成');
   } catch (err: any) {
-    console.error('[chineseEyes] 激活失败:', err);
-    vscode.window.showErrorMessage(`扩展选择助手 激活失败: ${err.message}`);
+    // 激活失败不影响其他扩展
+    console.error('[chineseEyes] 激活部分失败:', err);
+    // 仍然让扩展激活，不要抛出错误
   }
 }
 

@@ -20,8 +20,8 @@ export class ExtensionDetailPanel {
   private _disposables: vscode.Disposable[] = [];
 
   private _originalReadme = '';
-  private _translatedReadme = '';
-  private _summary = '';
+  private _summaryZh = '';
+  private _summaryEn = '';
 
   public static show(
     extensionUri: vscode.Uri,
@@ -86,15 +86,11 @@ export class ExtensionDetailPanel {
     }
   }
 
-  /** 初始化加载 README + 自动翻译 */
+  /** 初始化：加载扩展信息供 AI 总结使用 */
   private async boot(openSummary: boolean): Promise<void> {
     this.post({ type: 'item', item: this._item, openSummary });
 
-    const config = vscode.workspace.getConfiguration('chineseEyes');
-    const autoTranslate = config.get('autoTranslateReadme', true);
-
-    // 1) 加载 README
-    this.post({ type: 'readmeLoading' });
+    // 加载扩展信息用于 AI 总结
     try {
       const readme = await getExtensionReadme(
         this._item.publisher,
@@ -102,51 +98,20 @@ export class ExtensionDetailPanel {
         this._item.readmeUrl
       );
       this._originalReadme = readme || '';
-      this.post({
-        type: 'readmeLoaded',
-        original: this._originalReadme,
-        translated: '',
-      });
     } catch (err: any) {
-      this.post({ type: 'readmeError', message: err.message || String(err) });
-      return;
+      // README 获取失败不影响使用，AI 总结会使用 description
+      console.warn('[chineseEyes] README 获取失败:', err.message);
     }
 
-    // 2) 自动翻译（如果开启且当前 provider 支持）
-    if (autoTranslate && this._originalReadme) {
-      await this.translateReadme();
-    }
-
-    // 3) 如果用户点的是「AI 总结」按钮，立即生成总结
+    // 如果用户点的是「AI 总结」按钮，立即生成总结
     if (openSummary) {
       this.requestSummary();
     }
   }
 
-  private async translateReadme(): Promise<void> {
-    if (!this._originalReadme) return;
-    this.post({ type: 'translating' });
-    try {
-      const isHtml = /<\w+/.test(this._originalReadme);
-      const sourceText = isHtml ? stripHtml(this._originalReadme) : this._originalReadme;
-      const translated = await this._translator.translateMarkdown(sourceText);
-      this._translatedReadme = translated;
-      this.post({
-        type: 'readmeLoaded',
-        original: this._originalReadme,
-        translated: this._translatedReadme,
-      });
-    } catch (err: any) {
-      this.post({
-        type: 'translateError',
-        message: err.message || String(err),
-      });
-    }
-  }
-
   private async requestSummary(): Promise<void> {
-    if (this._summary) {
-      this.post({ type: 'summaryDone', summary: this._summary });
+    if (this._summaryZh && this._summaryEn) {
+      this.post({ type: 'summaryDone', summaryZh: this._summaryZh, summaryEn: this._summaryEn });
       return;
     }
     if (!this._translator.canSummarize()) {
@@ -167,9 +132,13 @@ export class ExtensionDetailPanel {
         });
         return;
       }
-      const summary = await this._translator.summarize(text);
-      this._summary = summary;
-      this.post({ type: 'summaryDone', summary });
+      // 生成中文总结
+      const summaryZh = await this._translator.summarize(text);
+      this._summaryZh = summaryZh;
+      // 生成英文总结
+      const summaryEn = await this._translator.summarizeEn(text);
+      this._summaryEn = summaryEn;
+      this.post({ type: 'summaryDone', summaryZh: this._summaryZh, summaryEn: this._summaryEn });
     } catch (err: any) {
       this.post({
         type: 'summaryError',
@@ -184,9 +153,6 @@ export class ExtensionDetailPanel {
         case 'ready':
           this.post({ type: 'item', item: this._item, openSummary: false });
           break;
-        case 'requestTranslate':
-          await this.translateReadme();
-          break;
         case 'requestSummary':
           await this.requestSummary();
           break;
@@ -200,11 +166,8 @@ export class ExtensionDetailPanel {
           if (msg.url) vscode.env.openExternal(vscode.Uri.parse(msg.url));
           break;
         case 'openMarketplace':
-          vscode.env.openExternal(
-            vscode.Uri.parse(
-              `https://marketplace.visualstudio.com/items?itemName=${this._item.id}`
-            )
-          );
+          // 在 VS Code 扩展市场里显示该扩展
+          vscode.commands.executeCommand('extension.open', this._item.id);
           break;
       }
     } catch (err: any) {
@@ -314,8 +277,10 @@ body{font-family:var(--vscode-font-family);color:var(--fg);background:var(--bg);
 
   <div class="section summary" id="summarySection">
     <div class="section-head">
-      <h2>💡 AI 总结：有什么用 · 收不收费 · 怎么用</h2>
+      <h2>💡 AI 总结</h2>
       <div class="controls">
+        <button id="showSummaryZhBtn" class="active">中文</button>
+        <button id="showSummaryEnBtn">英文</button>
         <button id="regenSummaryBtn" style="display:none">重新生成</button>
       </div>
     </div>
@@ -324,20 +289,6 @@ body{font-family:var(--vscode-font-family);color:var(--fg);background:var(--bg);
         点击下方按钮，让 AI 用中文总结这个扩展的用途、收费和用法。<br>
         <button id="generateSummaryBtn">生成 AI 总结</button>
       </div>
-    </div>
-  </div>
-
-  <div class="section">
-    <div class="section-head">
-      <h2>📖 README</h2>
-      <div class="controls" id="readmeControls">
-        <button id="showZhBtn" class="active">中文翻译</button>
-        <button id="showEnBtn">原文</button>
-        <button id="retransBtn">重新翻译</button>
-      </div>
-    </div>
-    <div class="section-body markdown" id="readmeBody">
-      <div class="empty-state">加载中…</div>
     </div>
   </div>
 </div>
@@ -349,17 +300,14 @@ const headerBlock = el('headerBlock');
 const summaryBody = el('summaryBody');
 const generateSummaryBtn = el('generateSummaryBtn');
 const regenSummaryBtn = el('regenSummaryBtn');
-const readmeBody = el('readmeBody');
-const showZhBtn = el('showZhBtn');
-const showEnBtn = el('showEnBtn');
-const retransBtn = el('retransBtn');
+const showSummaryZhBtn = el('showSummaryZhBtn');
+const showSummaryEnBtn = el('showSummaryEnBtn');
 
 let state = {
   item: null,
-  original: '',
-  translated: '',
-  summary: '',
-  view: 'zh',
+  summaryZh: '',     // AI 总结（中文）
+  summaryEn: '',     // AI 总结（英文原文）
+  summaryView: 'zh', // 当前显示语言 zh/en
 };
 
 function esc(s){
@@ -475,38 +423,24 @@ function renderHeader(item){
   if (openMarketBtn) openMarketBtn.addEventListener('click', () => vscode.postMessage({type:'openMarketplace'}));
 }
 
-function renderReadme(){
-  if (state.view === 'zh'){
-    if (state.translated){
-      readmeBody.innerHTML = md(state.translated);
-    } else if (state.original){
-      readmeBody.innerHTML = '<div class="empty-state">尚未翻译。点击「重新翻译」可手动触发。</div>';
-    } else {
-      readmeBody.innerHTML = '<div class="empty-state">未找到 README 内容</div>';
-    }
+function updateSummaryDisplay(){
+  const text = state.summaryView === 'zh' ? state.summaryZh : state.summaryEn;
+  if (text) {
+    summaryBody.innerHTML = '<div class="section-body markdown">' + md(text) + '</div>';
   } else {
-    if (state.original){
-      readmeBody.innerHTML = md(state.original);
-    } else {
-      readmeBody.innerHTML = '<div class="empty-state">未找到 README 内容</div>';
-    }
+    summaryBody.innerHTML = '<div class="empty-state">尚未生成 AI 总结</div>';
   }
+  showSummaryZhBtn.classList.toggle('active', state.summaryView === 'zh');
+  showSummaryEnBtn.classList.toggle('active', state.summaryView === 'en');
 }
 
-function setViewMode(mode){
-  state.view = mode;
-  showZhBtn.classList.toggle('active', mode === 'zh');
-  showEnBtn.classList.toggle('active', mode === 'en');
-  renderReadme();
+function setSummaryView(mode){
+  state.summaryView = mode;
+  updateSummaryDisplay();
 }
-showZhBtn.addEventListener('click', () => setViewMode('zh'));
-showEnBtn.addEventListener('click', () => setViewMode('en'));
-retransBtn.addEventListener('click', () => {
-  retransBtn.disabled = true;
-  retransBtn.textContent = '翻译中…';
-  vscode.postMessage({type:'requestTranslate'});
-});
 
+showSummaryZhBtn.addEventListener('click', () => setSummaryView('zh'));
+showSummaryEnBtn.addEventListener('click', () => setSummaryView('en'));
 generateSummaryBtn.addEventListener('click', () => {
   generateSummaryBtn.disabled = true;
   generateSummaryBtn.textContent = '生成中…';
@@ -515,7 +449,8 @@ generateSummaryBtn.addEventListener('click', () => {
 regenSummaryBtn.addEventListener('click', () => {
   regenSummaryBtn.disabled = true;
   regenSummaryBtn.textContent = '生成中…';
-  state.summary = '';
+  state.summaryZh = '';
+  state.summaryEn = '';
   vscode.postMessage({type:'requestSummary'});
 });
 
@@ -529,39 +464,18 @@ window.addEventListener('message', (event) => {
         summaryBody.innerHTML = '<div class="loading-state"><span class="spinner"></span>生成 AI 总结中…</div>';
       }
       break;
-    case 'readmeLoading':
-      readmeBody.innerHTML = '<div class="loading-state"><span class="spinner"></span>加载 README 中…</div>';
-      break;
-    case 'readmeLoaded':
-      state.original = msg.original || '';
-      state.translated = msg.translated || '';
-      retransBtn.disabled = false;
-      retransBtn.textContent = '重新翻译';
-      renderReadme();
-      break;
-    case 'translating':
-      retransBtn.disabled = true;
-      retransBtn.textContent = '翻译中…';
-      if (state.view === 'zh' && !state.translated){
-        readmeBody.innerHTML = '<div class="loading-state"><span class="spinner"></span>正在翻译为中文…</div>';
-      }
-      break;
-    case 'translateError':
-      retransBtn.disabled = false;
-      retransBtn.textContent = '重新翻译';
-      readmeBody.innerHTML = '<div class="error-state">翻译失败：' + esc(msg.message) + '</div>';
-      break;
     case 'summarizing':
       summaryBody.innerHTML = '<div class="loading-state"><span class="spinner"></span>AI 总结生成中…</div>';
       break;
     case 'summaryDone':
-      state.summary = msg.summary || '';
+      state.summaryZh = msg.summaryZh || '';  // 中文总结
+      state.summaryEn = msg.summaryEn || '';  // 英文总结
+      updateSummaryDisplay();
       generateSummaryBtn.disabled = false;
       generateSummaryBtn.textContent = '生成 AI 总结';
       regenSummaryBtn.style.display = 'inline-block';
       regenSummaryBtn.disabled = false;
       regenSummaryBtn.textContent = '重新生成';
-      summaryBody.innerHTML = '<div class="section-body markdown">' + md(state.summary) + '</div>';
       break;
     case 'summaryError':
       generateSummaryBtn.disabled = false;
@@ -569,9 +483,6 @@ window.addEventListener('message', (event) => {
       regenSummaryBtn.disabled = false;
       regenSummaryBtn.textContent = '重新生成';
       summaryBody.innerHTML = '<div class="error-state">' + esc(msg.message) + '</div>';
-      break;
-    case 'readmeError':
-      readmeBody.innerHTML = '<div class="error-state">加载 README 失败：' + esc(msg.message) + '</div>';
       break;
     case 'error':
       summaryBody.innerHTML = '<div class="error-state">' + esc(msg.message) + '</div>';

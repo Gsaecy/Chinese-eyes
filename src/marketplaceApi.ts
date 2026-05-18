@@ -1,4 +1,4 @@
-import { httpsRequest } from './tlsCompat';
+import { httpsRequest, resetTlsCache } from './tlsCompat';
 import {
   RawGalleryExtension,
   RawGalleryExtensionStatistic,
@@ -205,10 +205,14 @@ async function getExtensionFilesById(publisher: string, name: string): Promise<{
  */
 export async function getExtensionReadme(publisher: string, name: string, readmeUrl?: string): Promise<string> {
   try {
+    console.log(`[getExtensionReadme] 开始获取: ${publisher}.${name}, readmeUrl=${readmeUrl}`);
+
     // 1. 如果有直链，直接下载
     if (readmeUrl) {
       try {
+        console.log(`[getExtensionReadme] 通过直链下载: ${readmeUrl}`);
         const readmeResp = await httpsGet(readmeUrl);
+        console.log(`[getExtensionReadme] 直链响应长度: ${readmeResp.length}`);
         if (readmeResp.trim()) {
           return simpleMarkdownToHtml(readmeResp);
         }
@@ -218,10 +222,15 @@ export async function getExtensionReadme(publisher: string, name: string, readme
     }
 
     // 2. 按扩展 ID 精确查询（比文本搜索更可靠，且包含完整文件列表）
+    console.log(`[getExtensionReadme] 通过 API 查询: ${publisher}.${name}`);
     const files = await getExtensionFilesById(publisher, name);
+    console.log(`[getExtensionReadme] API 返回:`, JSON.stringify(files));
+
     if (files?.readmeUrl) {
       try {
+        console.log(`[getExtensionReadme] 下载 README: ${files.readmeUrl}`);
         const readmeResp = await httpsGet(files.readmeUrl);
+        console.log(`[getExtensionReadme] README 响应长度: ${readmeResp.length}`);
         if (readmeResp.trim()) {
           return simpleMarkdownToHtml(readmeResp);
         }
@@ -232,7 +241,9 @@ export async function getExtensionReadme(publisher: string, name: string, readme
     // 3. 备用：尝试获取长描述（Content.Details），几乎每个扩展都有
     if (files?.detailUrl) {
       try {
+        console.log(`[getExtensionReadme] 下载 Details: ${files.detailUrl}`);
         const detailResp = await httpsGet(files.detailUrl);
+        console.log(`[getExtensionReadme] Details 响应长度: ${detailResp.length}`);
         if (detailResp.trim()) {
           return simpleMarkdownToHtml(detailResp);
         }
@@ -243,16 +254,19 @@ export async function getExtensionReadme(publisher: string, name: string, readme
 
     // 4. 最坏情况：用缓存中的扩展描述
     try {
+      console.log(`[getExtensionReadme] 回退到描述字段`);
       const { extensions } = await queryExtensions({
         text: `${publisher}.${name}`,
         pageSize: 1,
         sortBy: 'relevance',
       });
       if (extensions.length > 0 && extensions[0].description) {
+        console.log(`[getExtensionReadme] 使用描述: ${extensions[0].description.substring(0, 100)}`);
         return `<p>${extensions[0].description}</p>`;
       }
     } catch { /* 忽略 */ }
 
+    console.warn(`[getExtensionReadme] 所有方式都失败了`);
     return '';
   } catch (err) {
     console.error('[getExtensionReadme] 最终失败:', err);
@@ -260,20 +274,43 @@ export async function getExtensionReadme(publisher: string, name: string, readme
   }
 }
 /** HTTPS POST 请求（使用 tlsCompat 的重试机制自动处理 BAD_DECRYPT） */
-function httpsPost(url: string, data: string): Promise<string> {
-  return httpsRequest(url, 'POST', {
-    'Content-Type': 'application/json',
-    'Accept': 'application/json;api-version=3.0-preview.1',
-    'Accept-Encoding': 'gzip',
-  }, data, 30000).then(res => res.body);
+async function httpsPost(url: string, data: string): Promise<string> {
+  try {
+    const res = await httpsRequest(url, 'POST', {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json;api-version=3.0-preview.1',
+      'Accept-Encoding': 'gzip',
+    }, data, 30000);
+    return res.body;
+  } catch (err) {
+    console.warn('[marketplaceApi] httpsPost 失败，重置 TLS 缓存后重试:', (err as Error).message);
+    resetTlsCache();
+    const res = await httpsRequest(url, 'POST', {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json;api-version=3.0-preview.1',
+      'Accept-Encoding': 'gzip',
+    }, data, 30000);
+    return res.body;
+  }
 }
 
 /** HTTPS GET 请求（使用 tlsCompat 的重试机制自动处理 BAD_DECRYPT） */
-function httpsGet(url: string): Promise<string> {
-  return httpsRequest(url, 'GET', {
-    'Accept': '*/*',
-    'Accept-Encoding': 'gzip',
-  }, undefined, 30000).then(res => res.body);
+async function httpsGet(url: string): Promise<string> {
+  try {
+    const res = await httpsRequest(url, 'GET', {
+      'Accept': '*/*',
+      'Accept-Encoding': 'gzip',
+    }, undefined, 30000);
+    return res.body;
+  } catch (err) {
+    console.warn('[marketplaceApi] httpsGet 失败，重置 TLS 缓存后重试:', (err as Error).message);
+    resetTlsCache();
+    const res = await httpsRequest(url, 'GET', {
+      'Accept': '*/*',
+      'Accept-Encoding': 'gzip',
+    }, undefined, 30000);
+    return res.body;
+  }
 }
 
 /** Markdown → HTML 转换（增强版，支持纯 HTML 透传） */
