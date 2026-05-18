@@ -45,6 +45,8 @@ export type PricingStatus = 'free' | 'paid' | 'maybePaid';
 export interface ExtensionItem {
   /** 唯一标识，如 "publisher.name" */
   id: string;
+  /** 扩展技术名（用于 marketplace 直链） */
+  extensionName?: string;
   /** 显示名称（原始英文） */
   displayName: string;
   /** 发布者 */
@@ -81,14 +83,16 @@ export interface ExtensionItem {
   licenseUrl?: string;
   /** README 文件 URL */
   readmeUrl?: string;
+  /** 最近发布日期 */
+  lastUpdated?: string;
 }
 
 /** 翻译服务提供商枚举 */
-export type TranslationProvider = 'local' | 'deepl' | 'google' | 'libre' | 'custom' | 'deepseek';
+export type TranslationProvider = 'local' | 'deepl' | 'google' | 'libretranslate' | 'deepseek' | 'openai-compatible';
 
 /** 翻译服务配置 */
 export interface TranslationConfig {
-  provider: TranslationProvider;
+  provider: TranslationProvider | string;
   apiKey: string;
   customEndpoint?: string;
   customModel?: string;
@@ -103,20 +107,3 @@ export interface MarketplaceQueryOptions {
   category?: string;
   sortBy?: 'installCount' | 'rating' | 'publishedDate' | 'relevance';
 }
-
-/** Webview 与扩展之间通信的消息协议 */
-export type MessageFromWebview =
-  | { type: 'search'; query: string }
-  | { type: 'loadMore' }
-  | { type: 'install'; extensionId: string }
-  | { type: 'openDetail'; extensionId: string }
-  | { type: 'getDetail'; extensionId: string }
-  | { type: 'translate'; texts: string[] }
-  | { type: 'ready' };
-
-export type MessageToWebview =
-  | { type: 'searchResults'; items: ExtensionItem[]; hasMore: boolean; total: number }
-  | { type: 'moreResults'; items: ExtensionItem[]; hasMore: boolean }
-  | { type: 'detail'; item: ExtensionItem }
-  | { type: 'translations'; data: Record<string, string> }
-  | { type: 'error'; message: string };

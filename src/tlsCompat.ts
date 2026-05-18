@@ -247,16 +247,20 @@ function getAgent(level: number): https.Agent {
 
 /**
  * 创建安全的 HTTPS Agent（自动多级回退）
- * 这是外部调用的主要接口
+ * 仅在 Windows 上使用自定义 TLS Agent；macOS/Linux 使用 Node 默认 Agent
  */
 export function createSafeHttpsAgent(): https.Agent {
-  // 如果设置了 LOCAL_PROXY，直接使用代理
+  // 非 Windows 平台使用 Node.js 默认 HTTPS Agent（最安全，无需自定义）
+  if (process.platform !== 'win32') {
+    return new https.Agent({ keepAlive: true, maxSockets: 5 });
+  }
+
+  // 如果设置了 LOCAL_PROXY，使用代理
   if (LOCAL_PROXY) {
     return createProxyAgent(LOCAL_PROXY);
   }
 
-  // 尝试层级 2（仅 CBC + ChaCha20，无 GCM），失败后逐级回退
-  // ⚠️ 从 Level 2 开始，避免 Level 1 的 GCM 套件触发 BoringSSL BAD_DECRYPT
+  // Windows：尝试层级 2（仅 CBC + ChaCha20，无 GCM），失败后逐级回退
   for (let level = 2; level <= 5; level++) {
     try {
       return getAgent(level);
@@ -335,18 +339,21 @@ async function _requestWithGuard(
   const mod = isHttps ? https : http;
   const host = urlObj.hostname;
 
-  // 获取该 host 当前使用的 agent 层级
+  // 仅在 Windows 上使用自定义 TLS Agent 来规避 BoringSSL BAD_DECRYPT；
+  // macOS/Linux 上 BoringSSL 没有这个 bug，自定义旧密码套件反而导致兼容问题。
+  const isWindows = process.platform === 'win32';
   const startLevel = getAgentLevelForHost(host);
   let agent: https.Agent | undefined;
   let currentLevel = startLevel;
 
-  if (isHttps) {
+  if (isHttps && isWindows) {
     try {
       agent = getAgent(currentLevel);
     } catch (e) {
       // agent 创建失败，用默认
     }
   }
+  // 非 Windows：agent 保持 undefined，Node.js 使用默认 SSL 处理（最安全）
 
   // 安全超时计时器（硬性拒绝，防止 Promise 挂死）
   const isElectron = typeof (process as any).type !== 'undefined';

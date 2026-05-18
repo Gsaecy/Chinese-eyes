@@ -73,6 +73,64 @@ export class Translator {
     return results[text] || text;
   }
 
+  /**
+   * 翻译一段较长的 Markdown 文本（如 README）。
+   * 不使用 SEP 分隔策略，让 LLM 直接输出中文 Markdown，保留原结构。
+   * 当 provider 不是 LLM 时，回退到本地词典逐段处理。
+   */
+  async translateMarkdown(markdown: string): Promise<string> {
+    if (!markdown || !markdown.trim()) return markdown;
+
+    if (!this.isLLMProvider() || !this.config.apiKey) {
+      return localTranslate(markdown);
+    }
+
+    const defaultEndpoint = this.config.provider === 'deepseek'
+      ? 'https://api.deepseek.com'
+      : 'https://api.openai.com';
+    const defaultModel = this.config.provider === 'deepseek'
+      ? 'deepseek-chat'
+      : 'gpt-4o-mini';
+    const endpoint = (this.config.customEndpoint || defaultEndpoint).replace(/\/+$/, '');
+    const model = this.config.customModel || defaultModel;
+
+    const systemPrompt = [
+      '你是一个专业的 Markdown 翻译器，把英文 Markdown 文档翻译成简体中文 Markdown。',
+      '规则：',
+      '1. 完整保留原 Markdown 结构（标题、列表、表格、代码块、链接、图片、HTML 标签）',
+      '2. 只翻译自然语言内容，不要翻译代码块、行内代码、命令、URL、品牌名',
+      '3. 保留技术术语（API/SDK/CLI/IDE 等）不翻译',
+      '4. 翻译后直接输出 Markdown，不要包在 ```markdown 代码块里，不要寒暄说明',
+      '5. 如果原文已是中文则原样返回',
+      '6. 对涉及收费的句子（含 paid/pricing/subscription/trial/premium/license/billing 等），在该句末尾追加 ⚠️',
+    ].join('\n');
+
+    const response = await httpsPost(
+      `${endpoint}/v1/chat/completions`,
+      JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: markdown.substring(0, 16000) },
+        ],
+        temperature: 0.1,
+        max_tokens: 6000,
+      }),
+      {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.config.apiKey}`,
+      }
+    );
+
+    const result = JSON.parse(response);
+    if (result.error) {
+      throw new Error(result.error.message || JSON.stringify(result.error));
+    }
+    const out = result.choices?.[0]?.message?.content;
+    if (!out) throw new Error('翻译返回为空');
+    return String(out).trim();
+  }
+
   clearCache(): void {
     this.cache.clear();
   }
@@ -88,11 +146,83 @@ export class Translator {
       case 'libretranslate':
         return this.translateLibre(texts);
       case 'deepseek':
-        return this.translateDeepSeek(texts);
+        return this.translateOpenAILike(texts, 'https://api.deepseek.com', 'deepseek-chat');
+      case 'openai-compatible':
+        return this.translateOpenAILike(texts, 'https://api.openai.com', 'gpt-4o-mini');
       default:
         console.log('未配置翻译API，使用本地翻译');
         return texts.map(t => localTranslate(t));
     }
+  }
+
+  /** 是否支持 AI 总结 */
+  canSummarize(): boolean {
+    return (this.config.provider === 'deepseek' || this.config.provider === 'openai-compatible')
+      && !!this.config.apiKey;
+  }
+
+  /** 是否使用了基于 LLM 的翻译（具备智能翻译能力） */
+  isLLMProvider(): boolean {
+    return this.config.provider === 'deepseek' || this.config.provider === 'openai-compatible';
+  }
+
+  /**
+   * 调用 LLM 进行 AI 总结（无翻译流程，直接 system+user 提示）
+   * 仅在 provider 为 deepseek 或 openai-compatible 时可用
+   */
+  async summarize(content: string, customSystemPrompt?: string): Promise<string> {
+    if (!this.canSummarize()) {
+      throw new Error('当前翻译源不支持 AI 总结，请切换到 DeepSeek 或 OpenAI 兼容并配置 API Key');
+    }
+    const defaultEndpoint = this.config.provider === 'deepseek'
+      ? 'https://api.deepseek.com'
+      : 'https://api.openai.com';
+    const defaultModel = this.config.provider === 'deepseek'
+      ? 'deepseek-chat'
+      : 'gpt-4o-mini';
+    const endpoint = (this.config.customEndpoint || defaultEndpoint).replace(/\/+$/, '');
+    const model = this.config.customModel || defaultModel;
+
+    const systemPrompt = customSystemPrompt || [
+      '你是一个 VS Code 扩展说明助手。',
+      '请用中文对用户提供的扩展介绍/README 进行总结，面向不懂英语的普通用户。',
+      '总结必须包含以下三部分，使用 Markdown 标题：',
+      '## 有什么用',
+      '用大白话说明扩展的核心功能、解决什么问题。',
+      '## 收不收费',
+      '明确告知是否需要付费、价格、限制；若原文未提及则写「未明确说明，可能是免费的」。',
+      '## 怎么用',
+      '安装后如何启用，用 1-4 个步骤简明说明。',
+      '注意：',
+      '- 通俗易懂，不堆专业术语',
+      '- 直接输出 Markdown，不要包装在 ```markdown 代码块中',
+      '- 不要前置寒暄，开头就是 ## 标题',
+    ].join('\n');
+
+    const response = await httpsPost(
+      `${endpoint}/v1/chat/completions`,
+      JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: content.substring(0, 12000) },
+        ],
+        temperature: 0.2,
+        max_tokens: 1200,
+      }),
+      {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.config.apiKey}`,
+      }
+    );
+
+    const result = JSON.parse(response);
+    if (result.error) {
+      throw new Error(result.error.message || JSON.stringify(result.error));
+    }
+    const text = result.choices?.[0]?.message?.content;
+    if (!text) throw new Error('AI 返回为空');
+    return String(text).trim();
   }
 
   private async translateDeepL(texts: string[]): Promise<string[]> {
@@ -137,14 +267,17 @@ export class Translator {
     return (result.translatedText ?? texts.join('\n<<<SEP>>>\n')).split('\n<<<SEP>>>\n');
   }
 
-  private async translateDeepSeek(texts: string[]): Promise<string[]> {
+  private async translateOpenAILike(
+    texts: string[],
+    defaultEndpoint: string,
+    defaultModel: string
+  ): Promise<string[]> {
     const apiKey = this.config.apiKey;
-    if (!apiKey) throw new Error('请配置 DeepSeek API Key');
+    if (!apiKey) throw new Error('请配置 API Key');
 
-    const endpoint = this.config.customEndpoint || 'https://api.deepseek.com';
-    const model = this.config.customModel || 'deepseek-chat';
+    const endpoint = (this.config.customEndpoint || defaultEndpoint).replace(/\/+$/, '');
+    const model = this.config.customModel || defaultModel;
 
-    // 构建翻译 prompt：将多条文本用分隔符连接，让模型逐条翻译
     const toTranslate = texts.join('\n<<<SEP>>>\n');
     const systemPrompt = [
       '你是一个专业的英语到简体中文翻译器。',
@@ -176,6 +309,9 @@ export class Translator {
     );
 
     const result = JSON.parse(response);
+    if (result.error) {
+      throw new Error(result.error.message || JSON.stringify(result.error));
+    }
     const translated = result.choices?.[0]?.message?.content ?? toTranslate;
     return translated.split('<<<SEP>>>').map((t: string) => t.trim());
   }
@@ -552,6 +688,10 @@ function httpRequest(
     const urlObj = new URL(url);
     const mod = useHttps ? https : http;
 
+    // macOS/Linux 使用 Node 默认 HTTPS Agent，避免自定义 TLS 干扰 API 调用
+    const isMacOrLinux = process.platform !== 'win32';
+    const agent = useHttps && !isMacOrLinux ? createSafeHttpsAgent() : undefined;
+
     const options: https.RequestOptions = {
       hostname: urlObj.hostname,
       path: urlObj.pathname + urlObj.search,
@@ -559,7 +699,7 @@ function httpRequest(
       method,
       headers: { ...headers, 'Content-Length': Buffer.byteLength(data) },
       timeout: 30000,
-      agent: useHttps ? createSafeHttpsAgent() : undefined,
+      agent,
     };
 
     const req = mod.request(options, (res: http.IncomingMessage) => {

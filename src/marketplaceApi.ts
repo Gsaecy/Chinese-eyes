@@ -119,6 +119,7 @@ function rawToExtensionItem(raw: RawGalleryExtension): ExtensionItem {
 
   return {
     id: `${raw.publisher.publisherName}.${raw.extensionName}`,
+    extensionName: raw.extensionName,
     displayName: raw.displayName || raw.extensionName,
     publisher: raw.publisher.publisherName,
     publisherDisplayName: raw.publisher.displayName,
@@ -139,6 +140,7 @@ function rawToExtensionItem(raw: RawGalleryExtension): ExtensionItem {
     licenseUrl: latestVersion?.properties?.find(
       (p) => p.key === 'Microsoft.VisualStudio.Services.Content.License'
     )?.value,
+    lastUpdated: latestVersion?.lastUpdated || raw.lastUpdated,
   };
 }
 
@@ -263,7 +265,7 @@ function httpsPost(url: string, data: string): Promise<string> {
     'Content-Type': 'application/json',
     'Accept': 'application/json;api-version=3.0-preview.1',
     'Accept-Encoding': 'gzip',
-  }, data, 15000).then(res => res.body);
+  }, data, 30000).then(res => res.body);
 }
 
 /** HTTPS GET 请求（使用 tlsCompat 的重试机制自动处理 BAD_DECRYPT） */
@@ -271,7 +273,7 @@ function httpsGet(url: string): Promise<string> {
   return httpsRequest(url, 'GET', {
     'Accept': '*/*',
     'Accept-Encoding': 'gzip',
-  }, undefined, 15000).then(res => res.body);
+  }, undefined, 30000).then(res => res.body);
 }
 
 /** Markdown → HTML 转换（增强版，支持纯 HTML 透传） */

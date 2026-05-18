@@ -1,0 +1,39 @@
+# 源码 / 开发文件
+.vscode/**
+.vscode-test/**
+src/**
+.gitignore
+.eslintrc*
+tsconfig.json
+tsconfig*.json
+**/*.map
+**/*.ts
+**/*.d.ts
+node_modules/**
+
+# 测试与脚本（包含本地诊断脚本）
+scripts/**
+**/test/**
+**/*.test.js
+**/*.spec.js
+
+# 包管理
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# 临时/本地配置
+**/.env
+**/.env.*
+**/*.local
+**/*.bak
+**/*_backup.*
+.DS_Store
+
+# Git
+.git/**
+.gitattributes
+
+# 文档源
+.github/**
+CHANGELOG-DRAFT.md

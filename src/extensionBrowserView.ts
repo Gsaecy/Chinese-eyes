@@ -1,574 +1,666 @@
-﻿import * as vscode from 'vscode';
-import { Translator } from './translator';
+import * as vscode from 'vscode';
+import { Translator, TranslationConfig } from './translator';
+import { queryExtensions } from './marketplaceApi';
+import { ExtensionItem } from './types';
+import { ExtensionDetailPanel } from './extensionDetailPanel';
 
+/**
+ * 侧边栏：扩展列表浏览（搜索 + 卡片）
+ * - 列表项提供「详情」「AI 总结」两个按钮
+ * - 「详情」打开主编辑区的 ExtensionDetailPanel，自动翻译 README
+ * - 「AI 总结」也走 ExtensionDetailPanel，但默认展开总结区域
+ */
 export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'chineseEyes.marketplace';
 
   private _view?: vscode.WebviewView;
-  private _panel?: vscode.WebviewPanel;
   private _translator: Translator;
   private _context: vscode.ExtensionContext;
-  private _lastOriginalText = '';
 
-  constructor(private readonly _extensionUri: vscode.Uri, translator: Translator, context: vscode.ExtensionContext) {
+  private _query = '';
+  private _sortBy: 'relevance' | 'installCount' | 'rating' | 'publishedDate' = 'installCount';
+  private _page = 1;
+  private _hasMore = true;
+  private _loading = false;
+  private _items: ExtensionItem[] = [];
+
+  constructor(
+    private readonly _extensionUri: vscode.Uri,
+    translator: Translator,
+    context: vscode.ExtensionContext
+  ) {
     this._translator = translator;
     this._context = context;
   }
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     this._view = webviewView;
-    webviewView.webview.options = { enableScripts: true, localResourceRoots: [this._extensionUri] };
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [this._extensionUri],
+    };
     webviewView.webview.html = this.buildHtml(webviewView.webview);
     webviewView.webview.onDidReceiveMessage((m) => this.handleMessage(m));
   }
 
-  async handleMessage(msg: any): Promise<void> {
+  private syncConfig(): TranslationConfig {
+    const config = vscode.workspace.getConfiguration('chineseEyes');
+    const cfg: TranslationConfig = {
+      provider: config.get('translationProvider', 'local'),
+      apiKey: config.get('apiKey', ''),
+      targetLanguage: 'zh-CN',
+      customEndpoint: config.get('apiEndpoint', ''),
+      customModel: config.get('apiModel', ''),
+    };
+    this._translator.updateConfig(cfg);
+    return cfg;
+  }
+
+  private async handleMessage(msg: any): Promise<void> {
     try {
       switch (msg.type) {
-        case 'ready':
-          const config = vscode.workspace.getConfiguration('chineseEyes');
-          let currentProvider = config.get('translationProvider', 'local');
-          const savedApiKey = config.get('apiKey', '') || this._context.globalState.get('apiKey', '');
-          const hasApiKey = !!savedApiKey;
-          // 保险：如果没有 API Key 却选了非 local 翻译源，强制切回 local
-          if (currentProvider !== 'local' && !hasApiKey) {
-            currentProvider = 'local';
-          }
-          if (savedApiKey) {
-            this._translator.updateConfig({
-              provider: currentProvider,
-              apiKey: savedApiKey,
-              targetLanguage: 'zh-CN',
-              customEndpoint: config.get('apiEndpoint', ''),
-              customModel: config.get('apiModel', ''),
+        case 'ready': {
+          const cfg = this.syncConfig();
+          this.postMessage({
+            type: 'init',
+            provider: cfg.provider,
+            hasApiKey: !!cfg.apiKey,
+            canSummarize: this._translator.canSummarize(),
+            pageSize: vscode.workspace.getConfiguration('chineseEyes').get('pageSize', 20),
+          });
+          if (this._items.length === 0) {
+            await this.doSearch('', true);
+          } else {
+            this.postMessage({
+              type: 'searchResults',
+              items: this._items,
+              hasMore: this._hasMore,
+              query: this._query,
+              page: this._page,
             });
           }
-          this.postMessage({ type: 'init', provider: currentProvider, hasApiKey });
+          break;
+        }
+
+        case 'search':
+          this._query = (msg.query || '').trim();
+          await this.doSearch(this._query, true);
           break;
 
-        case 'translate':
-          this._lastOriginalText = msg.text;
-          await this.translateText(msg.text);
+        case 'loadMore':
+          if (!this._loading && this._hasMore) {
+            await this.doSearch(this._query, false);
+          }
           break;
 
-        case 'summarize':
-          await this.summarizeText(this._lastOriginalText);
+        case 'setSort':
+          this._sortBy = msg.sortBy || 'installCount';
+          await this.doSearch(this._query, true);
           break;
 
-        case 'saveApiKey':
+        case 'openDetail':
+        case 'openSummary': {
+          this.syncConfig();
+          const item = this._items.find((i) => i.id === msg.extensionId);
+          if (!item) {
+            vscode.window.showWarningMessage('未找到扩展信息，请重新搜索');
+            return;
+          }
+          ExtensionDetailPanel.show(
+            this._context.extensionUri,
+            this._translator,
+            item,
+            { openSummary: msg.type === 'openSummary' }
+          );
+          break;
+        }
+
+        case 'openMarketplace': {
+          const item = this._items.find((i) => i.id === msg.extensionId);
+          if (item) {
+            const url = `https://marketplace.visualstudio.com/items?itemName=${item.id}`;
+            vscode.env.openExternal(vscode.Uri.parse(url));
+          }
+          break;
+        }
+
+        case 'install': {
+          const item = this._items.find((i) => i.id === msg.extensionId);
+          if (item) {
+            vscode.commands.executeCommand('workbench.extensions.installExtension', item.id);
+          }
+          break;
+        }
+
+        case 'saveSettings': {
           try {
             const chConfig = vscode.workspace.getConfiguration('chineseEyes');
-            await chConfig.update('apiKey', msg.apiKey, vscode.ConfigurationTarget.Global);
-            await chConfig.update('translationProvider', 'deepseek', vscode.ConfigurationTarget.Global);
-            this._translator.updateConfig({
-              provider: 'deepseek',
-              apiKey: msg.apiKey,
-              targetLanguage: 'zh-CN',
-              customEndpoint: '',
-              customModel: '',
+            const provider = msg.provider || 'deepseek';
+            await chConfig.update('translationProvider', provider, vscode.ConfigurationTarget.Global);
+            await chConfig.update('apiKey', msg.apiKey || '', vscode.ConfigurationTarget.Global);
+            await chConfig.update('apiEndpoint', msg.endpoint || '', vscode.ConfigurationTarget.Global);
+            await chConfig.update('apiModel', msg.model || '', vscode.ConfigurationTarget.Global);
+            const cfg = this.syncConfig();
+            this.postMessage({
+              type: 'settingsSaved',
+              provider: cfg.provider,
+              hasApiKey: !!cfg.apiKey,
+              canSummarize: this._translator.canSummarize(),
             });
-            this.postMessage({ type: 'apiKeySaved', success: true, provider: 'deepseek' });
           } catch (err: any) {
-            this.postMessage({ type: 'error', message: '保存 API Key 失败: ' + err.message });
+            this.postMessage({ type: 'error', message: '保存设置失败: ' + err.message });
           }
           break;
+        }
 
-        case 'setProvider':
-          try {
-            await vscode.workspace.getConfiguration('chineseEyes').update('translationProvider', msg.provider, vscode.ConfigurationTarget.Global);
-            this._translator.updateConfig({
-              provider: msg.provider,
-              targetLanguage: 'zh-CN',
-            });
-            this.postMessage({ type: 'providerSet', provider: msg.provider });
-          } catch (err: any) {
-            this.postMessage({ type: 'error', message: '设置翻译源失败: ' + err.message });
-          }
+        case 'openSettingsUI':
+          vscode.commands.executeCommand('workbench.action.openSettings', '@ext:honor-world.ext-trans-picker');
           break;
 
         case 'openUrl':
-          if (msg.url) {
-            vscode.env.openExternal(vscode.Uri.parse(msg.url));
-          }
-          break;
-
-        case 'openSettings':
-          vscode.commands.executeCommand('workbench.action.openSettings', '@ext:ext-trans-picker');
+          if (msg.url) vscode.env.openExternal(vscode.Uri.parse(msg.url));
           break;
       }
     } catch (err: any) {
-      console.error('[ext-trans-picker] handleMessage 异常:', err);
-      this.postMessage({ type: 'error', message: err.message });
+      console.error('[chineseEyes] handleMessage 异常:', err);
+      this.postMessage({ type: 'error', message: err.message || String(err) });
     }
   }
 
-  private async translateText(text: string): Promise<void> {
-    if (!text || !text.trim()) {
-      this.postMessage({ type: 'translated', original: '', translated: '请输入要翻译的文本' });
-      return;
+  private async doSearch(query: string, reset: boolean): Promise<void> {
+    if (this._loading) return;
+    this._loading = true;
+    if (reset) {
+      this._items = [];
+      this._page = 1;
+      this._hasMore = true;
     }
-    this.postMessage({ type: 'translating' });
-    try {
-      const result = await this._translator.translate(text);
-      this.postMessage({ type: 'translated', original: text, translated: result });
-    } catch (err: any) {
-      this.postMessage({ type: 'error', message: '翻译失败: ' + err.message });
-    }
-  }
+    this.postMessage({ type: 'loading', append: !reset });
 
-  private async summarizeText(text: string): Promise<void> {
-    if (!text || !text.trim()) {
-      this.postMessage({ type: 'summarized', summary: '没有可总结的内容' });
-      return;
-    }
-
-    const config = vscode.workspace.getConfiguration('chineseEyes');
-    const provider: string = config.get('translationProvider', 'local');
-
-    if (provider !== 'deepseek') {
-      const apiKey = config.get('apiKey', '') || this._context.globalState.get('apiKey', '');
-      if (apiKey) {
-        this._translator.updateConfig({
-          provider: 'deepseek',
-          apiKey,
-          targetLanguage: 'zh-CN',
-          customEndpoint: config.get('apiEndpoint', ''),
-          customModel: config.get('apiModel', ''),
-        });
-      }
-    }
-
-    this.postMessage({ type: 'summarizing' });
+    const pageSize = vscode.workspace.getConfiguration('chineseEyes').get('pageSize', 20);
 
     try {
-      if (provider !== 'deepseek' && !config.get('apiKey', '')) {
-        const simpleSummary = this.simpleSummary(text);
-        this.postMessage({ type: 'summarized', summary: simpleSummary });
-        return;
-      }
+      const { extensions, total } = await queryExtensions({
+        text: query,
+        pageNumber: this._page,
+        pageSize,
+        sortBy: this._sortBy,
+      });
 
-      const summary = await this._translator.translate(
-        this.buildSummarizePrompt(text)
+      // 异步翻译每个扩展的简介（不阻塞列表展示）
+      const newItems = extensions;
+      this._items = reset ? newItems : this._items.concat(newItems);
+      this._hasMore = this._items.length < total && extensions.length > 0;
+
+      this.postMessage({
+        type: 'searchResults',
+        items: this._items,
+        hasMore: this._hasMore,
+        query,
+        page: this._page,
+        total,
+      });
+
+      this._page += 1;
+
+      // 异步翻译这一批的描述
+      this.translateDescriptionsAsync(newItems).catch((e) =>
+        console.warn('[chineseEyes] 翻译描述失败:', e)
       );
-      this.postMessage({ type: 'summarized', summary });
     } catch (err: any) {
-      const simpleSummary = this.simpleSummary(text);
-      const note = '\n\n[注意] 如需更精准总结，请配置 DeepSeek API Key';
-      this.postMessage({ type: 'summarized', summary: simpleSummary + note });
+      console.error('[chineseEyes] 搜索失败:', err);
+      this.postMessage({ type: 'error', message: '搜索失败: ' + (err.message || String(err)) });
+    } finally {
+      this._loading = false;
     }
   }
 
-  private buildSummarizePrompt(text: string): string {
-    return [
-      '请用中文对以下英文内容进行总结（面向不懂英语的普通用户），包含三部分：',
-      '',
-      '1. **有什么用**：这个扩展/工具的主要功能是什么，用大白话说清楚',
-      '2. **收不收费**：明确告诉用户是否需要付费，多少钱，有什么限制',
-      '3. **怎么用**：安装后如何使用，简单几步说明',
-      '',
-      '注意：',
-      '- 用通俗易懂的中文，不要用专业术语',
-      '- 每部分用标题 + 内容格式',
-      '- 如果原文提到价格、订阅、免费试用等，一定要重点说明',
-      '- 如果原文没有提到收费，就写"未明确说明收费情况"',
-      '',
-      '原文内容：',
-      '---',
-      text.substring(0, 8000),
-      '---',
-    ].join('\n');
-  }
+  private async translateDescriptionsAsync(items: ExtensionItem[]): Promise<void> {
+    if (items.length === 0) return;
+    const provider = this._translator.isLLMProvider();
+    const config = vscode.workspace.getConfiguration('chineseEyes');
+    const apiKey = config.get('apiKey', '');
+    // 仅 LLM 翻译需要 key；本地词典/其他翻译源照常调用
+    if (provider && !apiKey) return;
 
-  private simpleSummary(text: string): string {
-    const lower = text.toLowerCase();
-    const parts: string[] = [];
+    const texts = items.map((i) => i.description).filter((t) => t && t.trim());
+    if (texts.length === 0) return;
 
-    const firstLine = text.split(/[.\n]/).filter(s => s.trim().length > 10).slice(0, 3).join('. ');
-    parts.push('**有什么用**\n' + firstLine.substring(0, 300));
-
-    const paidKeywords = ['paid', 'pricing', 'subscription', 'free', 'trial', 'premium', 'pro', 'enterprise', '$', 'price', 'buy', 'purchase', 'monthly', 'annual', 'license', 'billing'];
-    const foundPaid = paidKeywords.filter(k => lower.includes(k));
-    if (foundPaid.length > 0) {
-      parts.push('**收费信息**\n原文提到了收费相关关键词（' + foundPaid.join('、') + '），建议进一步查看详情确认费用。');
-    } else {
-      parts.push('**收费信息**\n未检测到明确的收费关键词，可能是免费工具。建议进一步查看详情确认。');
+    try {
+      const trans = await this._translator.translateBatch(texts);
+      const map: Record<string, string> = {};
+      for (const item of items) {
+        const t = trans[item.description];
+        if (t && t !== item.description) {
+          map[item.id] = t;
+        }
+      }
+      this.postMessage({ type: 'descriptionsTranslated', map });
+    } catch (e) {
+      console.warn('[chineseEyes] 翻译描述失败:', e);
     }
-
-    const installMatches = text.match(/install|setup|usage|getting started/i);
-    if (installMatches) {
-      parts.push('**怎么用**\n安装后即可使用，具体用法请参考扩展的 README 说明。');
-    } else {
-      parts.push('**怎么用**\n安装扩展后，通常可在 VS Code 命令面板（Ctrl+Shift+P）中搜索扩展名来使用。');
-    }
-
-    return parts.join('\n\n---\n\n');
   }
 
   public postMessage(msg: any): void {
     this._view?.webview.postMessage(msg);
-    this._panel?.webview.postMessage(msg);
   }
 
   private buildHtml(webview: vscode.Webview): string {
     const N = getNonce();
     const W = webview.cspSource;
-    return '<!DOCTYPE html>' +
-      '<html lang="zh-CN">' +
-      '<head>' +
-      '<meta charset="UTF-8">' +
-      '<meta http-equiv="Content-Security-Policy" content="default-src ' + "'none'" + '; style-src ' + "'unsafe-inline' " + W + '; script-src ' + "'nonce-" + N + "'" + ';">' +
-      '<style nonce="' + N + '">' +
-      ':root{' +
-      '--fg:var(--vscode-editor-foreground);' +
-      '--bg:var(--vscode-editor-background);' +
-      '--card:var(--vscode-sideBar-background);' +
-      '--border:var(--vscode-widget-border);' +
-      '--btn:var(--vscode-button-background);' +
-      '--btn-fg:var(--vscode-button-foreground);' +
-      '--sub:var(--vscode-descriptionForeground);' +
-      '--link:var(--vscode-textLink-foreground);' +
-      '--input-bg:var(--vscode-input-background);' +
-      '--input-fg:var(--vscode-input-foreground);' +
-      '--input-border:var(--vscode-input-border);' +
-      '--success:#1ea55b;--warning:#c9a93c;--error:#c95c3c;' +
-      '}' +
-      '*{box-sizing:border-box;margin:0;padding:0}' +
-      'body{font-family:var(--vscode-font-family);font-size:13px;color:var(--fg);background:var(--bg);padding:12px}' +
-      'h2{font-size:15px;font-weight:700;margin-bottom:4px;display:flex;align-items:center;gap:6px}' +
-      '.subtitle{font-size:11px;color:var(--sub);margin-bottom:12px}' +
-      '.capability-notice{padding:8px 10px;border-radius:6px;font-size:11px;line-height:1.6;margin-bottom:10px;display:none}' +
-      '.capability-notice.warning{display:block;background:rgba(201,169,60,.12);border:1px solid var(--warning);color:var(--warning)}' +
-      '.capability-notice.info{display:block;background:rgba(30,165,91,.1);border:1px solid var(--success);color:var(--success)}' +
-      '.provider-row{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}' +
-      '.provider-btn{padding:4px 10px;border-radius:12px;font-size:11px;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--sub);transition:all .15s;user-select:none}' +
-      '.provider-btn:hover{border-color:var(--btn);color:var(--btn)}' +
-      '.provider-btn.active{background:var(--btn);color:var(--btn-fg);border-color:var(--btn)}' +
-      '.input-area{position:relative;margin-bottom:10px}' +
-      '.input-area textarea{width:100%;height:100px;padding:10px;border:1px solid var(--input-border);border-radius:6px;background:var(--input-bg);color:var(--input-fg);resize:vertical;font-size:13px;font-family:var(--vscode-font-family);outline:none}' +
-      '.input-area textarea:focus{border-color:var(--btn)}' +
-      '.input-area .char-count{position:absolute;bottom:6px;right:10px;font-size:10px;color:var(--sub)}' +
-      '.btn-row{display:flex;gap:6px;margin-bottom:12px}' +
-      '.btn-row button{flex:1;padding:7px 0;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;border:none;transition:opacity .15s}' +
-      '.btn-row button:disabled{opacity:.4;cursor:not-allowed}' +
-      '.btn-translate{background:var(--btn);color:var(--btn-fg)}' +
-      '.btn-translate:hover:not(:disabled){opacity:.9}' +
-      '.btn-clear{background:transparent;color:var(--sub);border:1px solid var(--border)}' +
-      '.btn-clear:hover{background:var(--btn);color:var(--btn-fg);border-color:var(--btn)}' +
-      '.btn-settings{flex:0;padding:7px 10px;background:transparent;color:var(--sub);border:1px solid var(--border);border-radius:6px;cursor:pointer;font-size:16px}' +
-      '.result-section{display:none;margin-bottom:12px}' +
-      '.result-section .section-label{font-size:11px;color:var(--sub);margin-bottom:4px;font-weight:600}' +
-      '.result-box{padding:10px;background:var(--card);border:1px solid var(--border);border-radius:6px;font-size:13px;line-height:1.7;white-space:pre-wrap;word-break:break-word;margin-bottom:8px}' +
-      '.result-box .translated-text{color:var(--fg)}' +
-      '.summary-row{display:none;gap:6px;margin-bottom:12px}' +
-      '.summary-row button{flex:1;padding:7px 0;border-radius:6px;cursor:pointer;font-size:13px;font-weight:600;border:none;transition:opacity .15s}' +
-      '.summary-row button:disabled{opacity:.4;cursor:not-allowed}' +
-      '.btn-summarize{background:var(--link);color:var(--btn-fg)}' +
-      '.btn-summarize:hover:not(:disabled){opacity:.9}' +
-      '.summary-section{display:none;margin-bottom:12px}' +
-      '.summary-section .section-label{font-size:11px;color:var(--sub);margin-bottom:4px;font-weight:600}' +
-      '.summary-box{padding:12px;background:var(--card);border:1px solid var(--success);border-radius:6px;font-size:13px;line-height:1.8;white-space:pre-wrap;word-break:break-word;color:var(--fg)}' +
-      '.summary-box strong{color:var(--btn)}' +
-      '.settings-area{margin-top:16px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:8px}' +
-      '.settings-area h3{font-size:12px;font-weight:700;margin-bottom:8px;color:var(--sub);display:flex;justify-content:space-between;align-items:center}' +
-      '.settings-area h3 .toggle{font-size:11px;color:var(--link);cursor:pointer;font-weight:400}' +
-      '.settings-area h3 .toggle:hover{text-decoration:underline}' +
-      '.settings-row{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}' +
-      '.settings-row label{font-size:11px;color:var(--sub)}' +
-      '.settings-row input{padding:6px 8px;border:1px solid var(--input-border);border-radius:4px;background:var(--input-bg);color:var(--input-fg);font-size:12px;outline:none}' +
-      '.settings-row input:focus{border-color:var(--btn)}' +
-      '.settings-row input::placeholder{color:var(--sub);opacity:.5}' +
-      '.settings-actions{display:flex;gap:6px;margin-top:4px}' +
-      '.settings-actions button{padding:5px 12px;border-radius:4px;cursor:pointer;font-size:12px;border:none;font-weight:600}' +
-      '.btn-save{background:var(--btn);color:var(--btn-fg)}' +
-      '.btn-save:hover{opacity:.9}' +
-      '.btn-save:disabled{opacity:.4;cursor:not-allowed}' +
-      '.settings-hint{font-size:10px;color:var(--sub);margin-top:4px;line-height:1.5}' +
-      '.status-bar{margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;font-size:11px;color:var(--sub)}' +
-      '.status-bar .status-item{display:flex;align-items:center;gap:3px}' +
-      '.status-dot{width:6px;height:6px;border-radius:50%;display:inline-block}' +
-      '.status-dot.green{background:var(--success)}' +
-      '.status-dot.yellow{background:var(--warning)}' +
-      '.status-dot.red{background:var(--error)}' +
-      '.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);padding:6px 16px;border-radius:16px;font-size:12px;z-index:999;pointer-events:none;animation:toastIn .3s ease;display:none}' +
-      '.toast.success{background:var(--success);color:#fff}' +
-      '.toast.error{background:var(--error);color:#fff}' +
-      '.toast.info{background:var(--btn);color:var(--btn-fg)}' +
-      '@keyframes toastIn{from{opacity:0;transform:translateX(-50%) translateY(10px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}' +
-      '</style>' +
-      '</head>' +
-      '<body>' +
-      '<div id="app">' +
-      '<h2>扩展选择助手</h2>' +
-      '<div class="subtitle">粘贴外文 → 自动翻译 → AI 总结</div>' +
-      '<div class="capability-notice" id="capabilityNotice"></div>' +
-      '<div class="provider-row">' +
-      '<span class="provider-btn active" data-provider="local">本地词典</span>' +
-      '<span class="provider-btn" data-provider="deepseek">DeepSeek</span>' +
-      '<span class="provider-btn" data-provider="deepl">DeepL</span>' +
-      '<span class="provider-btn" data-provider="google">Google</span>' +
-      '<span class="provider-btn" data-provider="libretranslate">Libre</span>' +
-      '</div>' +
-      '<div class="input-area">' +
-      '<textarea id="inputText" placeholder="在此粘贴要翻译的文本(扩展描述、README 等)..."></textarea>' +
-      '<span class="char-count" id="charCount">0 字符</span>' +
-      '</div>' +
-      '<div class="btn-row">' +
-      '<button class="btn-translate" id="translateBtn">翻译</button>' +
-      '<button class="btn-clear" id="clearBtn">清空</button>' +
-      '<button class="btn-settings" id="toggleSettings">设置</button>' +
-      '</div>' +
-      '<div class="result-section" id="resultSection">' +
-      '<div class="section-label">翻译结果</div>' +
-      '<div class="result-box"><div class="translated-text" id="resultTranslated"></div></div>' +
-      '</div>' +
-      '<div class="summary-row" id="summaryRow">' +
-      '<button class="btn-summarize" id="summarizeBtn">AI 总结: 有什么用 - 收不收费 - 怎么用</button>' +
-      '</div>' +
-      '<div class="summary-section" id="summarySection">' +
-      '<div class="section-label">AI 总结</div>' +
-      '<div class="summary-box" id="summaryContent"></div>' +
-      '</div>' +
-      '<div class="settings-area" id="settingsArea" style="display:none">' +
-      '<h3>翻译设置<span class="toggle" id="hideSettings">收起</span></h3>' +
-      '<div class="settings-row">' +
-      '<label>API Key(DeepSeek 推荐，总结功能需要)</label>' +
-      '<input type="password" id="apiKeyInput" placeholder="输入你的 API Key...">' +
-      '</div>' +
-      '<div class="settings-row">' +
-      '<label>自定义端点(可选)</label>' +
-      '<input type="text" id="endpointInput" placeholder="如 https://api.deepseek.com">' +
-      '</div>' +
-      '<div class="settings-row">' +
-      '<label>模型名称(DeepSeek 可选，默认 deepseek-chat)</label>' +
-      '<input type="text" id="modelInput" placeholder="deepseek-chat">' +
-      '</div>' +
-      '<div class="settings-actions">' +
-      '<button class="btn-save" id="saveSettingsBtn">保存</button>' +
-      '</div>' +
-      '<div class="settings-hint">' +
-      '⚠️ DeepSeek = 翻译 + AI 总结 都可用<br>' +
-      '⚠️ DeepL / Google / LibreTranslate = 仅翻译，不能 AI 总结<br>' +
-      '⚠️ 本地词典 = 仅基础翻译，不需要 API Key' +
-      '</div>' +
-      '<div style="margin-top:8px;padding:10px;background:rgba(30,165,91,.08);border:1px solid var(--success);border-radius:6px;font-size:11px;line-height:1.7;color:var(--fg)">' +
-      '<strong style="color:var(--success)">🔑 如何获取 DeepSeek API Key？</strong><br>' +
-      '1. 打开 <a href="#" onclick="vscode.postMessage({type:\'openUrl\',url:\'https://platform.deepseek.com/\'});return false" style="color:var(--link)">platform.deepseek.com</a> 注册账号<br>' +
-      '2. 登录后进入「API Keys」页面<br>' +
-      '3. 点击「创建 API Key」并复制<br>' +
-      '4. 将 Key 粘贴到上方输入框中<br>' +
-      '5. 点击「保存」按钮，自动切换为 DeepSeek 引擎' +
-      '</div>' +
-      '</div>' +
-      '<div class="status-bar">' +
-      '<span class="status-item"><span class="status-dot green" id="translateDot"></span> 翻译: <span id="translateStatus">就绪</span></span>' +
-      '<span class="status-item"><span class="status-dot yellow" id="summaryDot"></span> 总结: <span id="summaryStatus">需 DeepSeek</span></span>' +
-      '<span class="status-item">翻译源: <span id="currentProvider">local</span></span>' +
-      '</div>' +
-      '<div class="toast" id="toast"></div>' +
-      '</div>' +
-      '<script nonce="' + N + '">' +
-      'const vscode = acquireVsCodeApi();' +
-      'const inputText = document.getElementById("inputText");' +
-      'const translateBtn = document.getElementById("translateBtn");' +
-      'const clearBtn = document.getElementById("clearBtn");' +
-      'const resultSection = document.getElementById("resultSection");' +
-      'const summaryRow = document.getElementById("summaryRow");' +
-      'const summarySection = document.getElementById("summarySection");' +
-      'const resultTranslated = document.getElementById("resultTranslated");' +
-      'const summaryContent = document.getElementById("summaryContent");' +
-      'const summarizeBtn = document.getElementById("summarizeBtn");' +
-      'const charCount = document.getElementById("charCount");' +
-      'const toggleSettings = document.getElementById("toggleSettings");' +
-      'const hideSettings = document.getElementById("hideSettings");' +
-      'const settingsArea = document.getElementById("settingsArea");' +
-      'const apiKeyInput = document.getElementById("apiKeyInput");' +
-      'const endpointInput = document.getElementById("endpointInput");' +
-      'const modelInput = document.getElementById("modelInput");' +
-      'const saveSettingsBtn = document.getElementById("saveSettingsBtn");' +
-      'const currentProvider = document.getElementById("currentProvider");' +
-      'const translateStatus = document.getElementById("translateStatus");' +
-      'const summaryStatus = document.getElementById("summaryStatus");' +
-      'const translateDot = document.getElementById("translateDot");' +
-      'const summaryDot = document.getElementById("summaryDot");' +
-      'const capabilityNotice = document.getElementById("capabilityNotice");' +
-      'const toast = document.getElementById("toast");' +
-      'const providerBtns = document.querySelectorAll(".provider-btn");' +
-      'let currentProviderVal = "local";' +
-      'let hasApiKey = false;' +
-      'let lastTranslatedText = "";' +
-      'function updateCapabilityUI(provider, hasKey){' +
-      '  var canSummarize = (provider === "deepseek" && hasKey);' +
-      '  var canTranslate = (provider === "local" || hasKey);' +
-      '  if (provider === "local") {' +
-      '    translateStatus.textContent = "就绪(本地)";' +
-      '    translateDot.className = "status-dot green";' +
-      '  } else if (hasKey) {' +
-      '    translateStatus.textContent = "就绪";' +
-      '    translateDot.className = "status-dot green";' +
-      '  } else {' +
-      '    translateStatus.textContent = "需配置 API";' +
-      '    translateDot.className = "status-dot red";' +
-      '  }' +
-      '  if (canSummarize) {' +
-      '    summaryStatus.textContent = "可用";' +
-      '    summaryDot.className = "status-dot green";' +
-      '    capabilityNotice.className = "capability-notice";' +
-      '    capabilityNotice.style.display = "none";' +
-      '  } else if (provider === "deepseek" && !hasKey) {' +
-      '    summaryStatus.textContent = "需配置 API";' +
-      '    summaryDot.className = "status-dot red";' +
-      '    capabilityNotice.className = "capability-notice warning";' +
-      '    capabilityNotice.innerHTML = "⚠️ 当前翻译源为 DeepSeek，但未配置 API Key。请在设置中填入 API Key 后方可使用翻译和 AI 总结功能。";' +
-      '    capabilityNotice.style.display = "block";' +
-      '  } else if (provider === "local") {' +
-      '    summaryStatus.textContent = "不支持";' +
-      '    summaryDot.className = "status-dot red";' +
-      '    capabilityNotice.className = "capability-notice warning";' +
-      '    capabilityNotice.innerHTML = "⚠️ 本地词典只能做基础翻译，不支持 AI 总结。如需 AI 总结功能，请切换到 DeepSeek 并配置 API Key。";' +
-      '    capabilityNotice.style.display = "block";' +
-      '  } else {' +
-      '    summaryStatus.textContent = "需 DeepSeek";' +
-      '    summaryDot.className = "status-dot yellow";' +
-      '    capabilityNotice.className = "capability-notice warning";' +
-      '    capabilityNotice.innerHTML = "⚠️ 当前使用的 \\"" + providerName(provider) + "\\" API 仅支持翻译，不支持 AI 总结。如需 AI 总结，请切换到 DeepSeek 翻译源。";' +
-      '    capabilityNotice.style.display = "block";' +
-      '  }' +
-      '}' +
-      'function providerName(p){' +
-      '  var names = {local:"本地词典",deepseek:"DeepSeek",deepl:"DeepL",google:"Google",libretranslate:"LibreTranslate"};' +
-      '  return names[p] || p;' +
-      '}' +
-      'providerBtns.forEach(function(btn){' +
-      '  btn.addEventListener("click",function(){' +
-      '    providerBtns.forEach(function(b){b.classList.remove("active")});' +
-      '    btn.classList.add("active");' +
-      '    currentProviderVal = btn.dataset.provider;' +
-      '    currentProvider.textContent = currentProviderVal;' +
-      '    updateCapabilityUI(currentProviderVal, hasApiKey);' +
-      '    if (currentProviderVal !== "local" && !hasApiKey) {' +
-      '      showToast("请在设置中配置 API Key","info");' +
-      '      expandSettings();' +
-      '    }' +
-      '    vscode.postMessage({type:"setProvider",provider:currentProviderVal});' +
-      '  });' +
-      '});' +
-      'function doTranslate(){' +
-      '  var text = inputText.value.trim();' +
-      '  if (!text) { showToast("请粘贴要翻译的文本","error"); return; }' +
-      '  translateBtn.disabled = true;' +
-      '  translateBtn.textContent = "翻译中...";' +
-      '  summaryRow.style.display = "none";' +
-      '  summarySection.style.display = "none";' +
-      '  resultSection.style.display = "none";' +
-      '  vscode.postMessage({type:"translate",text:text});' +
-      '}' +
-      'translateBtn.addEventListener("click",doTranslate);' +
-      'inputText.addEventListener("keydown",function(e){if(e.key==="Enter"&&e.ctrlKey)doTranslate()});' +
-      'inputText.addEventListener("input",function(){' +
-      '  var len = inputText.value.length;' +
-      '  charCount.textContent = len + " 字符";' +
-      '  charCount.style.color = len > 5000 ? "var(--warning)" : "";' +
-      '});' +
-      'clearBtn.addEventListener("click",function(){' +
-      '  inputText.value = "";' +
-      '  charCount.textContent = "0 字符";' +
-      '  resultSection.style.display = "none";' +
-      '  summaryRow.style.display = "none";' +
-      '  summarySection.style.display = "none";' +
-      '  translateBtn.disabled = false;' +
-      '  translateBtn.textContent = "翻译";' +
-      '  lastTranslatedText = "";' +
-      '});' +
-      'toggleSettings.addEventListener("click",expandSettings);' +
-      'hideSettings.addEventListener("click",function(){settingsArea.style.display="none"});' +
-      'function expandSettings(){settingsArea.style.display="block"}' +
-      'saveSettingsBtn.addEventListener("click",function(){' +
-      '  var key = apiKeyInput.value.trim();' +
-      '  if (!key) { showToast("请输入 API Key","error"); return; }' +
-      '  saveSettingsBtn.disabled = true;' +
-      '  saveSettingsBtn.textContent = "保存中...";' +
-      '  vscode.postMessage({type:"saveApiKey",apiKey:key});' +
-      '});' +
-      'summarizeBtn.addEventListener("click",function(){' +
-      '  if (!lastTranslatedText) { showToast("请先翻译文本","error"); return; }' +
-      '  if (!(currentProviderVal === "deepseek" && hasApiKey)) {' +
-      '    showToast("AI 总结需要 DeepSeek API。请在设置中配置 DeepSeek Key 或切换到 DeepSeek 翻译源","error");' +
-      '    expandSettings();' +
-      '    return;' +
-      '  }' +
-      '  summarySection.style.display = "none";' +
-      '  summarizeBtn.disabled = true;' +
-      '  summarizeBtn.textContent = "正在分析...";' +
-      '  vscode.postMessage({type:"summarize"});' +
-      '});' +
-      'window.addEventListener("message",function(event){' +
-      '  var msg = event.data;' +
-      '  switch(msg.type){' +
-      '    case "init":' +
-      '      currentProviderVal = msg.provider || "local";' +
-      '      currentProvider.textContent = currentProviderVal;' +
-      '      hasApiKey = msg.hasApiKey;' +
-      '      updateCapabilityUI(currentProviderVal, hasApiKey);' +
-      '      providerBtns.forEach(function(b){b.classList.toggle("active",b.dataset.provider===currentProviderVal)});' +
-      '      if (hasApiKey && currentProviderVal === "local") {' +
-      '        showToast("已检测到 API Key，可切换到 DeepSeek 获得 AI 总结功能","info");' +
-      '      }' +
-      '      break;' +
-      '    case "translated":' +
-      '      translateBtn.disabled = false;' +
-      '      translateBtn.textContent = "翻译";' +
-      '      lastTranslatedText = msg.translated;' +
-      '      resultSection.style.display = "block";' +
-      '      resultTranslated.textContent = msg.translated;' +
-      '      summaryRow.style.display = "block";' +
-      '      summarySection.style.display = "none";' +
-      '      summarizeBtn.disabled = false;' +
-      '      summarizeBtn.textContent = "AI 总结: 有什么用 - 收不收费 - 怎么用";' +
-      '      break;' +
-      '    case "summarized":' +
-      '      summarizeBtn.disabled = false;' +
-      '      summarizeBtn.textContent = "AI 总结: 有什么用 - 收不收费 - 怎么用";' +
-      '      summarySection.style.display = "block";' +
-      '      summaryContent.textContent = msg.summary;' +
-      '      break;' +
-      '    case "apiKeySaved":' +
-      '      saveSettingsBtn.disabled = false;' +
-      '      saveSettingsBtn.textContent = "保存";' +
-      '      if (msg.success) {' +
-      '        hasApiKey = true;' +
-      '        currentProviderVal = msg.provider || "deepseek";' +
-      '        currentProvider.textContent = currentProviderVal;' +
-      '        updateCapabilityUI(currentProviderVal, true);' +
-      '        providerBtns.forEach(function(b){b.classList.toggle("active",b.dataset.provider===currentProviderVal)});' +
-      '        showToast("设置已保存，已切换到 DeepSeek，翻译和 AI 总结均可使用","success");' +
-      '      }' +
-      '      break;' +
-      '    case "providerSet":' +
-      '      showToast("已切换到 " + providerName(msg.provider),"success");' +
-      '      break;' +
-      '    case "error":' +
-      '      translateBtn.disabled = false;' +
-      '      translateBtn.textContent = "翻译";' +
-      '      summarizeBtn.disabled = false;' +
-      '      summarizeBtn.textContent = "AI 总结: 有什么用 - 收不收费 - 怎么用";' +
-      '      saveSettingsBtn.disabled = false;' +
-      '      saveSettingsBtn.textContent = "保存";' +
-      '      showToast(msg.message,"error");' +
-      '      break;' +
-      '  }' +
-      '});' +
-      'var toastTimeout = null;' +
-      'function showToast(msg,type){' +
-      '  toast.textContent = msg;' +
-      '  toast.className = "toast " + type;' +
-      '  toast.style.display = "block";' +
-      '  clearTimeout(toastTimeout);' +
-      '  toastTimeout = setTimeout(function(){toast.style.display="none"},5000);' +
-      '}' +
-      'vscode.postMessage({type:"ready"});' +
-      '</script>' +
-      '</body>' +
-      '</html>';
+    const csp = [
+      `default-src 'none'`,
+      `img-src ${W} https: data:`,
+      `style-src 'unsafe-inline' ${W}`,
+      `script-src 'nonce-${N}'`,
+      `connect-src https:`,
+    ].join('; ');
+
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="${csp}">
+<style nonce="${N}">
+:root{
+  --fg:var(--vscode-editor-foreground);
+  --bg:var(--vscode-editor-background);
+  --card:var(--vscode-sideBar-background);
+  --border:var(--vscode-widget-border, rgba(128,128,128,.3));
+  --btn:var(--vscode-button-background);
+  --btn-fg:var(--vscode-button-foreground);
+  --btn-hover:var(--vscode-button-hoverBackground);
+  --sub:var(--vscode-descriptionForeground);
+  --link:var(--vscode-textLink-foreground);
+  --input-bg:var(--vscode-input-background);
+  --input-fg:var(--vscode-input-foreground);
+  --input-border:var(--vscode-input-border);
+  --success:#1ea55b;--warning:#c9a93c;--error:#c95c3c;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--vscode-font-family);font-size:13px;color:var(--fg);background:var(--bg);padding:8px}
+.header{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
+.search-row{display:flex;gap:4px}
+.search-row input{flex:1;padding:6px 8px;border:1px solid var(--input-border);border-radius:4px;background:var(--input-bg);color:var(--input-fg);font-size:12px;outline:none}
+.search-row input:focus{border-color:var(--btn)}
+.search-row button{padding:6px 10px;border:none;border-radius:4px;background:var(--btn);color:var(--btn-fg);cursor:pointer;font-size:12px}
+.search-row button:hover{background:var(--btn-hover)}
+.search-row .btn-settings{background:transparent;color:var(--sub);border:1px solid var(--border)}
+.search-row .btn-settings:hover{background:var(--btn);color:var(--btn-fg)}
+.sort-row{display:flex;gap:4px;flex-wrap:wrap;font-size:11px}
+.sort-chip{padding:2px 8px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--sub);cursor:pointer;user-select:none}
+.sort-chip:hover{border-color:var(--btn);color:var(--btn)}
+.sort-chip.active{background:var(--btn);color:var(--btn-fg);border-color:var(--btn)}
+.capability-bar{font-size:10px;color:var(--sub);display:flex;gap:8px;align-items:center;padding:4px 6px;border-radius:4px;background:rgba(128,128,128,.08)}
+.capability-bar .dot{width:6px;height:6px;border-radius:50%;display:inline-block}
+.capability-bar .dot.g{background:var(--success)}
+.capability-bar .dot.y{background:var(--warning)}
+.capability-bar .dot.r{background:var(--error)}
+.list{display:flex;flex-direction:column;gap:6px;margin-top:4px}
+.card{display:flex;gap:8px;padding:8px;background:var(--card);border:1px solid var(--border);border-radius:6px}
+.card .icon{width:42px;height:42px;border-radius:6px;flex-shrink:0;background:rgba(128,128,128,.15);object-fit:contain}
+.card .icon-fallback{width:42px;height:42px;border-radius:6px;flex-shrink:0;background:rgba(128,128,128,.15);display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--sub)}
+.card .body{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.card .title{font-weight:600;font-size:13px;line-height:1.3;word-break:break-word}
+.card .publisher{font-size:10px;color:var(--sub)}
+.card .desc{font-size:11px;color:var(--fg);line-height:1.5;word-break:break-word;opacity:.92}
+.card .desc-zh{font-size:11px;color:var(--fg);line-height:1.5;word-break:break-word;border-left:2px solid var(--success);padding-left:6px;margin-top:2px}
+.card .desc-zh.loading{opacity:.5;font-style:italic}
+.card .meta{display:flex;gap:6px;align-items:center;font-size:10px;color:var(--sub);flex-wrap:wrap;margin-top:2px}
+.card .badge{padding:1px 6px;border-radius:8px;font-size:10px;line-height:1.4}
+.card .badge.free{background:rgba(30,165,91,.15);color:var(--success)}
+.card .badge.paid{background:rgba(201,92,60,.15);color:var(--error)}
+.card .badge.maybe{background:rgba(201,169,60,.15);color:var(--warning)}
+.card .actions{display:flex;gap:4px;margin-top:4px;flex-wrap:wrap}
+.card .actions button{flex:1;min-width:60px;padding:4px 6px;font-size:11px;border:1px solid var(--border);background:transparent;color:var(--fg);border-radius:4px;cursor:pointer}
+.card .actions button:hover{background:var(--btn);color:var(--btn-fg);border-color:var(--btn)}
+.card .actions .primary{background:var(--btn);color:var(--btn-fg);border-color:var(--btn)}
+.card .actions .primary:hover{background:var(--btn-hover)}
+.card .actions .summary{color:var(--link);border-color:var(--link)}
+.card .actions .summary:hover{background:var(--link);color:var(--btn-fg)}
+.empty{padding:20px;text-align:center;color:var(--sub);font-size:12px}
+.loading-bar{display:flex;align-items:center;justify-content:center;gap:6px;padding:10px;color:var(--sub);font-size:11px}
+.spinner{width:12px;height:12px;border:2px solid var(--sub);border-top-color:var(--btn);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.load-more{padding:6px;text-align:center;background:transparent;color:var(--link);border:1px dashed var(--border);border-radius:6px;cursor:pointer;font-size:11px;margin:4px 0}
+.load-more:hover{border-color:var(--link);background:rgba(0,122,204,.08)}
+.settings-area{margin-top:12px;padding:10px;background:var(--card);border:1px solid var(--border);border-radius:6px;display:none}
+.settings-area.show{display:block}
+.settings-area h3{font-size:12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;color:var(--sub)}
+.settings-area h3 .close{cursor:pointer;color:var(--link);font-weight:400;font-size:11px}
+.field{display:flex;flex-direction:column;gap:3px;margin-bottom:8px}
+.field label{font-size:11px;color:var(--sub)}
+.field select,.field input{padding:5px 7px;border:1px solid var(--input-border);background:var(--input-bg);color:var(--input-fg);border-radius:4px;font-size:11px;outline:none}
+.field select:focus,.field input:focus{border-color:var(--btn)}
+.field .hint{font-size:10px;color:var(--sub);opacity:.8}
+.settings-actions{display:flex;gap:6px;margin-top:6px}
+.settings-actions button{padding:5px 10px;border:none;border-radius:4px;cursor:pointer;font-size:11px}
+.settings-actions .save{background:var(--btn);color:var(--btn-fg)}
+.settings-actions .save:hover{background:var(--btn-hover)}
+.settings-actions .open-ui{background:transparent;color:var(--sub);border:1px solid var(--border)}
+.settings-actions .open-ui:hover{background:var(--btn);color:var(--btn-fg)}
+.help-box{margin-top:8px;padding:8px;background:rgba(30,165,91,.08);border:1px solid var(--success);border-radius:4px;font-size:10px;line-height:1.7;color:var(--fg)}
+.help-box strong{color:var(--success)}
+.help-box a{color:var(--link);cursor:pointer;text-decoration:underline}
+.toast{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);padding:5px 14px;border-radius:14px;font-size:11px;z-index:99;display:none}
+.toast.success{background:var(--success);color:#fff}
+.toast.error{background:var(--error);color:#fff}
+.toast.info{background:var(--btn);color:var(--btn-fg)}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="search-row">
+    <input id="searchInput" type="text" placeholder="搜索扩展名 / 关键词...">
+    <button id="searchBtn">搜索</button>
+    <button id="settingsBtn" class="btn-settings" title="设置">⚙</button>
+  </div>
+  <div class="sort-row">
+    <span class="sort-chip" data-sort="installCount">热门</span>
+    <span class="sort-chip" data-sort="rating">评分</span>
+    <span class="sort-chip" data-sort="publishedDate">最新</span>
+    <span class="sort-chip" data-sort="relevance">相关</span>
+  </div>
+  <div class="capability-bar" id="capabilityBar">
+    <span><span class="dot g" id="dotTrans"></span> 翻译：<span id="transStat">本地</span></span>
+    <span><span class="dot r" id="dotSum"></span> AI 总结：<span id="sumStat">需配置</span></span>
+  </div>
+</div>
+
+<div id="listArea">
+  <div class="empty">输入关键词搜索，或加载热门扩展…</div>
+</div>
+
+<div class="settings-area" id="settingsArea">
+  <h3>设置 <span class="close" id="closeSettings">收起</span></h3>
+  <div class="field">
+    <label>翻译 / 总结 提供商</label>
+    <select id="providerSelect">
+      <option value="local">本地词典（离线，无 AI 总结）</option>
+      <option value="deepseek">DeepSeek（推荐，翻译 + AI 总结）</option>
+      <option value="openai-compatible">OpenAI 兼容（翻译 + AI 总结）</option>
+      <option value="deepl">DeepL（仅翻译）</option>
+      <option value="google">Google（仅翻译）</option>
+      <option value="libretranslate">LibreTranslate（仅翻译）</option>
+    </select>
+  </div>
+  <div class="field">
+    <label>API Key</label>
+    <input type="password" id="apiKeyInput" placeholder="输入你的 API Key...">
+    <div class="hint">本地词典不需要 Key；其余 provider 必须填写</div>
+  </div>
+  <div class="field">
+    <label>自定义 Endpoint（可选）</label>
+    <input type="text" id="endpointInput" placeholder="如 https://api.deepseek.com 或 https://api.openai.com">
+  </div>
+  <div class="field">
+    <label>自定义模型（可选）</label>
+    <input type="text" id="modelInput" placeholder="如 deepseek-chat、gpt-4o-mini、qwen-plus">
+  </div>
+  <div class="settings-actions">
+    <button class="save" id="saveSettingsBtn">保存</button>
+    <button class="open-ui" id="openSettingsBtn">在 VS Code 设置中打开</button>
+  </div>
+  <div class="help-box">
+    <strong>🔑 推荐配置</strong><br>
+    1. DeepSeek：注册 <a data-url="https://platform.deepseek.com/">platform.deepseek.com</a> → 创建 API Key<br>
+    2. OpenAI 兼容：填入 endpoint（如阿里云 DashScope、Moonshot、Together 等）+ 对应模型名<br>
+    3. 仅翻译：DeepL/Google/LibreTranslate 也可使用，但不能 AI 总结
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script nonce="${N}">
+const vscode = acquireVsCodeApi();
+const el = (id) => document.getElementById(id);
+const listArea = el('listArea');
+const searchInput = el('searchInput');
+const searchBtn = el('searchBtn');
+const settingsBtn = el('settingsBtn');
+const settingsArea = el('settingsArea');
+const closeSettings = el('closeSettings');
+const providerSelect = el('providerSelect');
+const apiKeyInput = el('apiKeyInput');
+const endpointInput = el('endpointInput');
+const modelInput = el('modelInput');
+const saveSettingsBtn = el('saveSettingsBtn');
+const openSettingsBtn = el('openSettingsBtn');
+const toast = el('toast');
+const dotTrans = el('dotTrans');
+const dotSum = el('dotSum');
+const transStat = el('transStat');
+const sumStat = el('sumStat');
+const sortChips = document.querySelectorAll('.sort-chip');
+
+let state = {
+  provider: 'local',
+  hasApiKey: false,
+  canSummarize: false,
+  items: [],
+  hasMore: false,
+  loading: false,
+  query: '',
+  sortBy: 'installCount',
+  descMap: {},
+};
+
+function fmtCount(n){
+  if (!n) return '0';
+  if (n >= 1e6) return (n/1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1) + 'K';
+  return String(n);
+}
+function esc(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderCapability(){
+  if (state.provider === 'local'){
+    transStat.textContent = '本地词典';
+    dotTrans.className = 'dot g';
+  } else if (state.hasApiKey){
+    transStat.textContent = state.provider;
+    dotTrans.className = 'dot g';
+  } else {
+    transStat.textContent = state.provider + '（缺 Key）';
+    dotTrans.className = 'dot r';
+  }
+  if (state.canSummarize){
+    sumStat.textContent = '可用（' + state.provider + '）';
+    dotSum.className = 'dot g';
+  } else {
+    sumStat.textContent = '需配置 DeepSeek/OpenAI 兼容';
+    dotSum.className = 'dot r';
+  }
+}
+
+function renderList(){
+  if (state.items.length === 0 && !state.loading){
+    listArea.innerHTML = '<div class="empty">没有找到匹配的扩展，换个关键词试试</div>';
+    return;
+  }
+  const parts = [];
+  for (const item of state.items){
+    const badge = item.pricingStatus === 'paid'
+      ? '<span class="badge paid">付费</span>'
+      : item.pricingStatus === 'maybePaid'
+        ? '<span class="badge maybe">可能付费</span>'
+        : '<span class="badge free">免费</span>';
+    const iconHtml = item.iconUrl
+      ? '<img class="icon" src="' + esc(item.iconUrl) + '" alt="' + esc((item.displayName || '?').slice(0,1)) + '">'
+      : '<div class="icon-fallback">' + esc((item.displayName || '?').slice(0,1).toUpperCase()) + '</div>';
+    const descZh = state.descMap[item.id];
+    const descZhHtml = descZh
+      ? '<div class="desc-zh">' + esc(descZh) + '</div>'
+      : (state.provider !== 'local' && state.hasApiKey
+        ? '<div class="desc-zh loading">翻译中…</div>'
+        : '');
+    parts.push(
+      '<div class="card" data-id="' + esc(item.id) + '">'
+      + iconHtml
+      + '<div class="body">'
+        + '<div class="title">' + esc(item.displayName) + '</div>'
+        + '<div class="publisher">' + esc(item.publisherDisplayName || item.publisher) + ' · v' + esc(item.version) + '</div>'
+        + (item.description ? '<div class="desc">' + esc(item.description) + '</div>' : '')
+        + descZhHtml
+        + '<div class="meta">'
+          + badge
+          + '<span>⬇ ' + fmtCount(item.installCount) + '</span>'
+          + (item.ratingScore ? '<span>★ ' + item.ratingScore.toFixed(1) + '（' + fmtCount(item.ratingCount) + '）</span>' : '')
+        + '</div>'
+        + '<div class="actions">'
+          + '<button class="primary" data-act="detail">详情</button>'
+          + '<button class="summary" data-act="summary">AI 总结</button>'
+          + '<button data-act="install" title="在 VS Code 中安装">安装</button>'
+          + '<button data-act="open" title="在浏览器打开市场页">↗</button>'
+        + '</div>'
+      + '</div>'
+      + '</div>'
+    );
+  }
+  if (state.hasMore){
+    parts.push('<button class="load-more" id="loadMoreBtn">加载更多…</button>');
+  }
+  listArea.innerHTML = parts.join('');
+  const loadMoreBtn = document.getElementById('loadMoreBtn');
+  if (loadMoreBtn){
+    loadMoreBtn.addEventListener('click', () => {
+      loadMoreBtn.textContent = '加载中…';
+      loadMoreBtn.disabled = true;
+      vscode.postMessage({type:'loadMore'});
+    });
+  }
+  listArea.querySelectorAll('.card').forEach((card) => {
+    const id = card.getAttribute('data-id');
+    card.querySelectorAll('button[data-act]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const act = btn.getAttribute('data-act');
+        if (act === 'detail') vscode.postMessage({type:'openDetail', extensionId: id});
+        else if (act === 'summary') vscode.postMessage({type:'openSummary', extensionId: id});
+        else if (act === 'install') vscode.postMessage({type:'install', extensionId: id});
+        else if (act === 'open') vscode.postMessage({type:'openMarketplace', extensionId: id});
+      });
+    });
+  });
+}
+
+function showLoading(append){
+  if (!append){
+    listArea.innerHTML = '<div class="loading-bar"><span class="spinner"></span>加载中…</div>';
+  }
+}
+
+function showToast(msg, type){
+  toast.textContent = msg;
+  toast.className = 'toast ' + (type || 'info');
+  toast.style.display = 'block';
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => { toast.style.display = 'none'; }, 3000);
+}
+
+function doSearch(){
+  state.query = searchInput.value.trim();
+  vscode.postMessage({type:'search', query: state.query});
+}
+searchBtn.addEventListener('click', doSearch);
+searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
+
+sortChips.forEach((chip) => {
+  chip.addEventListener('click', () => {
+    sortChips.forEach((c) => c.classList.remove('active'));
+    chip.classList.add('active');
+    state.sortBy = chip.getAttribute('data-sort');
+    vscode.postMessage({type:'setSort', sortBy: state.sortBy});
+  });
+});
+
+settingsBtn.addEventListener('click', () => {
+  settingsArea.classList.toggle('show');
+  if (settingsArea.classList.contains('show')){
+    providerSelect.value = state.provider;
+    apiKeyInput.value = '';
+    endpointInput.value = '';
+    modelInput.value = '';
+  }
+});
+closeSettings.addEventListener('click', () => settingsArea.classList.remove('show'));
+saveSettingsBtn.addEventListener('click', () => {
+  saveSettingsBtn.disabled = true;
+  saveSettingsBtn.textContent = '保存中…';
+  vscode.postMessage({
+    type: 'saveSettings',
+    provider: providerSelect.value,
+    apiKey: apiKeyInput.value.trim(),
+    endpoint: endpointInput.value.trim(),
+    model: modelInput.value.trim(),
+  });
+});
+openSettingsBtn.addEventListener('click', () => vscode.postMessage({type:'openSettingsUI'}));
+
+document.querySelectorAll('.help-box a').forEach((a) => {
+  a.addEventListener('click', (e) => {
+    e.preventDefault();
+    vscode.postMessage({type:'openUrl', url: a.getAttribute('data-url')});
+  });
+});
+
+window.addEventListener('message', (event) => {
+  const msg = event.data;
+  switch (msg.type){
+    case 'init':
+      state.provider = msg.provider || 'local';
+      state.hasApiKey = !!msg.hasApiKey;
+      state.canSummarize = !!msg.canSummarize;
+      renderCapability();
+      sortChips.forEach((c) => c.classList.toggle('active', c.getAttribute('data-sort') === state.sortBy));
+      break;
+    case 'loading':
+      state.loading = true;
+      showLoading(msg.append);
+      break;
+    case 'searchResults':
+      state.loading = false;
+      state.items = msg.items || [];
+      state.hasMore = !!msg.hasMore;
+      state.descMap = {};
+      renderList();
+      break;
+    case 'descriptionsTranslated':
+      Object.assign(state.descMap, msg.map || {});
+      renderList();
+      break;
+    case 'settingsSaved':
+      saveSettingsBtn.disabled = false;
+      saveSettingsBtn.textContent = '保存';
+      state.provider = msg.provider;
+      state.hasApiKey = !!msg.hasApiKey;
+      state.canSummarize = !!msg.canSummarize;
+      renderCapability();
+      settingsArea.classList.remove('show');
+      showToast('设置已保存', 'success');
+      // 重新搜索以应用新的翻译能力
+      vscode.postMessage({type:'search', query: state.query});
+      break;
+    case 'error':
+      state.loading = false;
+      saveSettingsBtn.disabled = false;
+      saveSettingsBtn.textContent = '保存';
+      showToast(msg.message, 'error');
+      break;
+  }
+});
+
+vscode.postMessage({type:'ready'});
+</script>
+</body>
+</html>`;
   }
 }
 

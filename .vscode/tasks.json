@@ -3,22 +3,27 @@
   "tasks": [
     {
       "label": "compile",
-      "type": "shell",
-      "command": "C:\\nodejs\\node-v18.20.4-win-x64\\npm.cmd run compile",
+      "type": "npm",
+      "script": "compile",
       "problemMatcher": "$tsc",
       "group": {
         "kind": "build",
         "isDefault": true
+      },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
       }
     },
     {
       "label": "watch",
-      "type": "shell",
-      "command": "C:\\nodejs\\node-v18.20.4-win-x64\\npm.cmd run watch",
+      "type": "npm",
+      "script": "watch",
       "problemMatcher": "$tsc-watch",
       "isBackground": true,
       "presentation": {
-        "reveal": "never"
+        "reveal": "never",
+        "panel": "shared"
       }
     }
   ]

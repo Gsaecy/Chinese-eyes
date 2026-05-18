@@ -1,8 +1,8 @@
 {
   "name": "ext-trans-picker",
   "displayName": "扩展选择助手",
-  "description": "Paste English text, auto-translate to Chinese, AI summary for VS Code extensions",
-  "version": "0.2.4",
+  "description": "浏览 VS Code 扩展市场，自动翻译详情为中文，AI 总结用途/收费/用法",
+  "version": "0.3.0",
   "publisher": "honor-world",
   "license": "MIT",
   "activationEvents": [
@@ -19,7 +19,9 @@
     "翻译",
     "translate",
     "chinese",
-    "中文"
+    "中文",
+    "marketplace",
+    "extension"
   ],
   "main": "./out/extension.js",
   "repository": {
@@ -41,14 +43,23 @@
             "deepl",
             "google",
             "libretranslate",
-            "deepseek"
+            "deepseek",
+            "openai-compatible"
+          ],
+          "enumDescriptions": [
+            "本地词典（离线、无需 API Key）",
+            "DeepL（需 API Key）",
+            "Google 翻译（需 API Key）",
+            "LibreTranslate（自托管，可选 API Key）",
+            "DeepSeek（需 API Key，支持 AI 总结）",
+            "OpenAI 兼容协议（需自定义 endpoint/model，支持 AI 总结）"
           ],
           "order": 1
         },
         "chineseEyes.apiKey": {
           "type": "string",
           "default": "",
-          "description": "翻译 API 密钥 (DeepSeek/DeepL/Google)",
+          "description": "翻译 API 密钥 (DeepSeek/DeepL/Google/OpenAI 兼容)",
           "markdownDescription": "翻译 API 密钥",
           "order": 2
         },
@@ -56,15 +67,29 @@
           "type": "string",
           "default": "",
           "description": "自定义 API 端点",
-          "markdownDescription": "自定义 API 端点 URL",
+          "markdownDescription": "自定义 API 端点 URL，例如 `https://api.deepseek.com` 或 `https://api.openai.com`",
           "order": 3
         },
         "chineseEyes.apiModel": {
           "type": "string",
           "default": "",
           "description": "自定义模型名称",
-          "markdownDescription": "如 `deepseek-chat` 或 `deepseek-reasoner`",
+          "markdownDescription": "如 `deepseek-chat`、`gpt-4o-mini`、`qwen-plus` 等",
           "order": 4
+        },
+        "chineseEyes.autoTranslateReadme": {
+          "type": "boolean",
+          "default": true,
+          "description": "打开扩展详情时自动翻译 README 内容",
+          "order": 5
+        },
+        "chineseEyes.pageSize": {
+          "type": "number",
+          "default": 20,
+          "minimum": 10,
+          "maximum": 50,
+          "description": "扩展列表每页显示数量",
+          "order": 6
         }
       }
     },
@@ -81,7 +106,7 @@
       "chineseEyes-sidebar": [
         {
           "id": "chineseEyes.marketplace",
-          "name": "扩展选择助手 翻译面板",
+          "name": "扩展列表",
           "type": "webview"
         }
       ]
@@ -89,7 +114,11 @@
     "commands": [
       {
         "command": "chineseEyes.openPanel",
-        "title": "🌐 扩展选择助手 - 打开翻译面板"
+        "title": "🌐 扩展选择助手 - 打开扩展列表"
+      },
+      {
+        "command": "chineseEyes.openSettings",
+        "title": "🌐 扩展选择助手 - 打开设置"
       }
     ]
   },
