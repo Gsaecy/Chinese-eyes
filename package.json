@@ -1,8 +1,8 @@
 {
   "name": "ext-trans-picker",
   "displayName": "扩展选择助手",
-  "description": "浏览 VS Code 扩展市场，自动翻译详情为中文，AI 总结用途/收费/用法",
-  "version": "0.3.1",
+  "description": "Browse VS Code marketplace, auto-translate details to Chinese, AI summary for usage/pricing/guide",
+  "version": "0.3.2",
   "publisher": "honor-world",
   "license": "MIT",
   "activationEvents": [
