@@ -10,10 +10,6 @@
 | 浏览扩展市场 | 自动翻译 | AI 总结 |
 |-------------|---------|---------|
 | 在侧边栏直接搜索 VS Code 扩展市场 | 扩展描述自动翻译为中文 | 总结：有什么用 · 收不收费 · 怎么用 |
-<img width="811" height="709" alt="01" src="https://github.com/user-attachments/assets/66a7ac8a-f685-4c6a-9535-ab52b35626fe" />
-<img width="895" height="708" alt="02" src="https://github.com/user-attachments/assets/abd7fc61-8989-4b67-b872-4237c2b9182e" />
-<img width="873" height="720" alt="03" src="https://github.com/user-attachments/assets/ba452e02-b3b5-44f8-9a5b-98b1c18c5cd0" />
-
 ---
 
 ## ✨ 主要功能
