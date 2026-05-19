@@ -178,6 +178,18 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
           vscode.commands.executeCommand('workbench.action.openSettings', '@ext:honor-world.ext-trans-picker');
           break;
 
+        case 'clearSearch':
+          this._query = '';
+          this._items = [];
+          this._page = 1;
+          this._hasMore = true;
+          this.postMessage({ type: 'welcome' });
+          break;
+
+        case 'openTranslator':
+          vscode.commands.executeCommand('chineseEyes.openTranslator');
+          break;
+
         case 'closePanel':
           vscode.commands.executeCommand('workbench.action.toggleSidebarVisibility');
           break;
@@ -365,9 +377,11 @@ body{font-family:var(--vscode-font-family);font-size:13px;color:var(--fg);backgr
 <div class="header">
   <div class="search-row">
     <input id="searchInput" type="text" placeholder="搜索扩展名 / 关键词...">
+    <button id="clearSearchBtn" class="btn-settings" title="清除搜索" style="display:none">✕</button>
     <button id="searchBtn">搜索</button>
+    <button id="translatorBtn" class="btn-settings" title="打开翻译面板">🌐</button>
     <button id="settingsBtn" class="btn-settings" title="设置">⚙</button>
-    <button id="closePanelBtn" class="btn-settings" title="关闭预览面板">✕</button>
+    <button id="closePanelBtn" class="btn-settings" title="关闭侧边栏">✕</button>
   </div>
   <div class="sort-row">
     <span class="sort-chip" data-sort="installCount">热门</span>
@@ -584,10 +598,14 @@ function showToast(msg, type){
 
 function doSearch(){
   state.query = searchInput.value.trim();
+  clearSearchBtn.style.display = state.query ? '' : 'none';
   vscode.postMessage({type:'search', query: state.query});
 }
 searchBtn.addEventListener('click', doSearch);
 searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
+searchInput.addEventListener('input', () => {
+  clearSearchBtn.style.display = searchInput.value.trim() ? '' : 'none';
+});
 
 sortChips.forEach((chip) => {
   chip.addEventListener('click', () => {
@@ -620,6 +638,24 @@ const closePanelBtn = el('closePanelBtn');
 if (closePanelBtn) {
   closePanelBtn.addEventListener('click', () => vscode.postMessage({ type: 'closePanel' }));
 }
+
+/* ---- 🌐 翻译面板 ---- */
+const translatorBtn = el('translatorBtn');
+if (translatorBtn) {
+  translatorBtn.addEventListener('click', () => vscode.postMessage({ type: 'openTranslator' }));
+}
+
+/* ---- 清除搜索 ---- */
+const clearSearchBtn = el('clearSearchBtn');
+if (clearSearchBtn) {
+  clearSearchBtn.addEventListener('click', () => {
+    searchInput.value = '';
+    state.query = '';
+    clearSearchBtn.style.display = 'none';
+    vscode.postMessage({ type: 'clearSearch' });
+  });
+}
+/**********************/
 
 saveSettingsBtn.addEventListener('click', () => {
   saveSettingsBtn.disabled = true;

@@ -424,11 +424,16 @@ async function _requestWithGuard(
       if (settled) return;
       const errMsg = (err as Error).message;
 
-      // BAD_DECRYPT 错误：尝试降级 agent 层级后重试
+      // TLS 连接错误：尝试降级 agent 层级后重试
       if (
         isHttps &&
         retryCount < 4 &&
-        (errMsg.includes('BAD_DECRYPT') || errMsg.includes('ECONNRESET') || errMsg.includes('CIPHER'))
+        (errMsg.includes('BAD_DECRYPT') ||
+         errMsg.includes('ECONNRESET') ||
+         errMsg.includes('CIPHER') ||
+         errMsg.includes('socket disconnected') ||
+         errMsg.includes('TLS connection') ||
+         errMsg.includes('close before'))
       ) {
         const nextLevel = currentLevel + 1;
 
