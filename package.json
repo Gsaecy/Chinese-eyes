@@ -2,12 +2,13 @@
   "name": "ext-trans-picker",
   "displayName": "扩展选择助手",
   "description": "Browse VS Code marketplace, auto-translate details to Chinese, AI summary for usage/pricing/guide",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "publisher": "honor-world",
   "license": "MIT",
   "activationEvents": [
     "onCommand:chineseEyes.openPanel",
-    "onCommand:chineseEyes.openSettings"
+    "onCommand:chineseEyes.openSettings",
+    "onCommand:chineseEyes.openTranslator"
   ],
   "engines": {
     "vscode": "^1.85.0"
@@ -120,8 +121,25 @@
       {
         "command": "chineseEyes.openSettings",
         "title": "🌐 扩展选择助手 - 打开设置"
+      },
+      {
+        "command": "chineseEyes.openTranslator",
+        "title": "🌐 扩展选择助手 - 打开翻译面板",
+        "icon": "$(symbol-text)"
       }
-    ]
+    ],
+    "menus": {
+      "titleBar": [
+        {
+          "command": "chineseEyes.openPanel",
+          "group": "navigation"
+        },
+        {
+          "command": "chineseEyes.openTranslator",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

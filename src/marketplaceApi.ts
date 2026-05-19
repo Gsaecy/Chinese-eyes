@@ -27,7 +27,12 @@ export async function queryExtensions(
   ];
 
   if (text) {
-    criteria.push({ filterType: 1, value: text }); // Search text
+    // 检测 publisher.extension 格式，按扩展 ID 精确搜索
+    const idMatch = text.match(/^([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_-]+)$/);
+    if (idMatch) {
+      criteria.push({ filterType: 7, value: text }); // ExtensionName filter (publisher.extension)
+    }
+    criteria.push({ filterType: 1, value: text }); // Search text (同时支持关键词搜索)
   }
 
   if (category) {
@@ -45,7 +50,7 @@ export async function queryExtensions(
         sortOrder: 0,
       },
     ],
-    flags: 0x1 | 0x2 | 0x4 | 0x8 | 0x80,
+    flags: 0x1 | 0x2 | 0x4 | 0x8 | 0x80 | 0x100,
   });
 
   const data = await httpsPost(MARKETPLACE_API_URL, requestBody);
@@ -173,7 +178,7 @@ async function getExtensionFilesById(publisher: string, name: string): Promise<{
         sortBy: 0,
         sortOrder: 0,
       }],
-      flags: 0x1 | 0x2 | 0x4 | 0x8 | 0x80,
+      flags: 0x1 | 0x2 | 0x4 | 0x8 | 0x80 | 0x100,
     });
 
     const data = await httpsPost(MARKETPLACE_API_URL, requestBody);

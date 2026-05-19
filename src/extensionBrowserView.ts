@@ -140,8 +140,7 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
         case 'openMarketplace': {
           const item = this._items.find((i) => i.id === msg.extensionId);
           if (item) {
-            const url = `https://marketplace.visualstudio.com/items?itemName=${item.id}`;
-            vscode.env.openExternal(vscode.Uri.parse(url));
+            vscode.commands.executeCommand('extension.open', item.id);
           }
           break;
         }
@@ -177,6 +176,10 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
 
         case 'openSettingsUI':
           vscode.commands.executeCommand('workbench.action.openSettings', '@ext:honor-world.ext-trans-picker');
+          break;
+
+        case 'closePanel':
+          vscode.commands.executeCommand('workbench.action.toggleSidebarVisibility');
           break;
 
         case 'openUrl':
@@ -364,6 +367,7 @@ body{font-family:var(--vscode-font-family);font-size:13px;color:var(--fg);backgr
     <input id="searchInput" type="text" placeholder="搜索扩展名 / 关键词...">
     <button id="searchBtn">搜索</button>
     <button id="settingsBtn" class="btn-settings" title="设置">⚙</button>
+    <button id="closePanelBtn" class="btn-settings" title="关闭预览面板">✕</button>
   </div>
   <div class="sort-row">
     <span class="sort-chip" data-sort="installCount">热门</span>
@@ -473,10 +477,10 @@ function fmtCount(n){
 }
 function esc(s){
   return String(s == null ? '' : s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
+    .replace(/&/g, '&')
+    .replace(/</g, '<')
+    .replace(/>/g, '>')
+    .replace(/"/g, '"')
     .replace(/'/g, '&#39;');
 }
 
@@ -531,7 +535,7 @@ function renderList(){
           + '<button class="primary" data-act="detail">详情</button>'
           + '<button class="summary" data-act="summary">AI 总结</button>'
           + '<button data-act="install" title="在 VS Code 中安装">安装</button>'
-          + '<button data-act="open" title="在浏览器打开市场页">↗</button>'
+          + '<button data-act="open" title="在编辑器打开扩展页">↗</button>'
         + '</div>'
       + '</div>'
       + '</div>'
@@ -611,6 +615,12 @@ if (loadExtensionsBtn) {
   });
 }
 closeSettings.addEventListener('click', () => settingsArea.classList.remove('show'));
+
+const closePanelBtn = el('closePanelBtn');
+if (closePanelBtn) {
+  closePanelBtn.addEventListener('click', () => vscode.postMessage({ type: 'closePanel' }));
+}
+
 saveSettingsBtn.addEventListener('click', () => {
   saveSettingsBtn.disabled = true;
   saveSettingsBtn.textContent = '保存中…';

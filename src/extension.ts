@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { ExtensionBrowserViewProvider } from './extensionBrowserView';
 import { Translator } from './translator';
+import { TranslatorPanel } from './translatorPanel';
 
 let provider: ExtensionBrowserViewProvider | undefined;
 let translator: Translator | undefined;
@@ -38,6 +39,13 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
       vscode.commands.registerCommand('chineseEyes.openSettings', () => {
         vscode.commands.executeCommand('workbench.action.openSettings', '@ext:honor-world.ext-trans-picker');
+      })
+    );
+
+    // 打开翻译面板命令
+    context.subscriptions.push(
+      vscode.commands.registerCommand('chineseEyes.openTranslator', () => {
+        TranslatorPanel.show(context.extensionUri, translator!);
       })
     );
 
