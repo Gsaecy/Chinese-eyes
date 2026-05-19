@@ -7,7 +7,7 @@ import { getExtensionReadme } from './marketplaceApi';
  * 扩展详情面板（在主编辑区独立 webview panel）
  * - 顶部：扩展元信息（图标、名称、发布者、安装量、价格、版本、链接）
  * - 中段：AI 总结（可折叠，加载中/已加载/未加载）
- * - 下方：翻译后的中文 README（与原文 toggle）
+ * - 下方：扩展详情原文 + 翻译按钮
  */
 export class ExtensionDetailPanel {
   public static readonly viewType = 'chineseEyes.detail';
@@ -20,6 +20,7 @@ export class ExtensionDetailPanel {
   private _disposables: vscode.Disposable[] = [];
 
   private _originalReadme = '';
+  private _translatedReadme = '';
   private _summaryZh = '';
   private _summaryEn = '';
 
@@ -98,6 +99,10 @@ export class ExtensionDetailPanel {
         this._item.readmeUrl
       );
       this._originalReadme = readme || '';
+      // 将原文 README 发送到 webview 显示
+      if (this._originalReadme) {
+        this.post({ type: 'originalReadme', content: this._originalReadme });
+      }
     } catch (err: any) {
       // README 获取失败不影响使用，AI 总结会使用 description
       console.warn('[chineseEyes] README 获取失败:', err.message);
@@ -156,6 +161,9 @@ export class ExtensionDetailPanel {
         case 'requestSummary':
           await this.requestSummary();
           break;
+        case 'translateReadme':
+          await this.handleTranslateReadme();
+          break;
         case 'install':
           vscode.commands.executeCommand(
             'workbench.extensions.installExtension',
@@ -172,6 +180,27 @@ export class ExtensionDetailPanel {
       }
     } catch (err: any) {
       this.post({ type: 'error', message: err.message || String(err) });
+    }
+  }
+
+  private async handleTranslateReadme(): Promise<void> {
+    if (!this._originalReadme) {
+      this.post({ type: 'translateReadmeError', message: '没有可翻译的原文内容' });
+      return;
+    }
+    if (this._translatedReadme) {
+      this.post({ type: 'translateReadmeDone', translated: this._translatedReadme });
+      return;
+    }
+    this.post({ type: 'translatingReadme' });
+    try {
+      const isHtml = /<\w+/.test(this._originalReadme);
+      const text = isHtml ? stripHtml(this._originalReadme) : this._originalReadme;
+      const translated = await this._translator.translateMarkdown(text);
+      this._translatedReadme = translated;
+      this.post({ type: 'translateReadmeDone', translated });
+    } catch (err: any) {
+      this.post({ type: 'translateReadmeError', message: err.message || String(err) });
     }
   }
 
@@ -231,6 +260,7 @@ body{font-family:var(--vscode-font-family);color:var(--fg);background:var(--bg);
 .actions .primary:hover{background:var(--btn-hover)}
 .section{margin-bottom:24px;padding:14px;background:var(--card);border:1px solid var(--border);border-radius:8px}
 .section.summary{border-color:var(--link)}
+.section.readme{border-color:var(--border)}
 .section-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
 .section-head h2{font-size:15px;font-weight:600;display:flex;align-items:center;gap:6px}
 .section-head .controls{display:flex;gap:6px}
@@ -291,6 +321,16 @@ body{font-family:var(--vscode-font-family);color:var(--fg);background:var(--bg);
       </div>
     </div>
   </div>
+
+  <div class="section readme" id="readmeSection" style="display:none">
+    <div class="section-head">
+      <h2>📄 扩展详情原文</h2>
+      <div class="controls">
+        <button id="translateReadmeBtn">翻译</button>
+      </div>
+    </div>
+    <div class="section-body markdown" id="readmeBody"></div>
+  </div>
 </div>
 
 <script nonce="${N}">
@@ -302,20 +342,26 @@ const generateSummaryBtn = el('generateSummaryBtn');
 const regenSummaryBtn = el('regenSummaryBtn');
 const showSummaryZhBtn = el('showSummaryZhBtn');
 const showSummaryEnBtn = el('showSummaryEnBtn');
+const readmeSection = el('readmeSection');
+const readmeBody = el('readmeBody');
+const translateReadmeBtn = el('translateReadmeBtn');
 
 let state = {
   item: null,
   summaryZh: '',     // AI 总结（中文）
   summaryEn: '',     // AI 总结（英文原文）
   summaryView: 'zh', // 当前显示语言 zh/en
+  originalReadme: '',     // 原文 README（从 extension 侧传过来）
+  translatedReadme: '',   // 翻译后 README
+  readmeView: 'original', // 当前显示原文/翻译
 };
 
 function esc(s){
   return String(s == null ? '' : s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
+    .replace(/&/g, '&')
+    .replace(/</g, '<')
+    .replace(/>/g, '>')
+    .replace(/"/g, '"')
     .replace(/'/g, '&#39;');
 }
 
@@ -439,6 +485,44 @@ function setSummaryView(mode){
   updateSummaryDisplay();
 }
 
+// ====== README 原文与翻译 ======
+
+function updateReadmeDisplay(){
+  const text = state.readmeView === 'translated' ? state.translatedReadme : state.originalReadme;
+  if (text) {
+    readmeSection.style.display = '';
+    readmeBody.innerHTML = md(text);
+  } else {
+    // 如果没有原文，隐藏整个区块
+    readmeSection.style.display = 'none';
+  }
+}
+
+function setReadmeView(mode){
+  state.readmeView = mode;
+  updateReadmeDisplay();
+}
+
+translateReadmeBtn.addEventListener('click', () => {
+  if (state.translatedReadme) {
+    // 已有翻译，在原文/翻译之间切换
+    if (state.readmeView === 'original') {
+      setReadmeView('translated');
+      translateReadmeBtn.textContent = '显示原文';
+    } else {
+      setReadmeView('original');
+      translateReadmeBtn.textContent = '翻译';
+    }
+  } else {
+    // 未翻译，请求翻译
+    translateReadmeBtn.disabled = true;
+    translateReadmeBtn.textContent = '翻译中…';
+    vscode.postMessage({type:'translateReadme'});
+  }
+});
+
+// ====== /README ======
+
 showSummaryZhBtn.addEventListener('click', () => setSummaryView('zh'));
 showSummaryEnBtn.addEventListener('click', () => setSummaryView('en'));
 generateSummaryBtn.addEventListener('click', () => {
@@ -463,13 +547,25 @@ window.addEventListener('message', (event) => {
       if (msg.openSummary){
         summaryBody.innerHTML = '<div class="loading-state"><span class="spinner"></span>生成 AI 总结中…</div>';
       }
+      // 如果有 originalReadme，显示原文区块
+      if (msg.originalReadme) {
+        state.originalReadme = msg.originalReadme;
+        updateReadmeDisplay();
+      }
+      break;
+    case 'originalReadme':
+      state.originalReadme = msg.content || '';
+      state.translatedReadme = '';
+      state.readmeView = 'original';
+      translateReadmeBtn.textContent = '翻译';
+      updateReadmeDisplay();
       break;
     case 'summarizing':
       summaryBody.innerHTML = '<div class="loading-state"><span class="spinner"></span>AI 总结生成中…</div>';
       break;
     case 'summaryDone':
-      state.summaryZh = msg.summaryZh || '';  // 中文总结
-      state.summaryEn = msg.summaryEn || '';  // 英文总结
+      state.summaryZh = msg.summaryZh || '';
+      state.summaryEn = msg.summaryEn || '';
       updateSummaryDisplay();
       generateSummaryBtn.disabled = false;
       generateSummaryBtn.textContent = '生成 AI 总结';
@@ -483,6 +579,22 @@ window.addEventListener('message', (event) => {
       regenSummaryBtn.disabled = false;
       regenSummaryBtn.textContent = '重新生成';
       summaryBody.innerHTML = '<div class="error-state">' + esc(msg.message) + '</div>';
+      break;
+    case 'translatingReadme':
+      translateReadmeBtn.disabled = true;
+      translateReadmeBtn.textContent = '翻译中…';
+      break;
+    case 'translateReadmeDone':
+      state.translatedReadme = msg.translated || '';
+      state.readmeView = 'translated';
+      translateReadmeBtn.disabled = false;
+      translateReadmeBtn.textContent = '显示原文';
+      updateReadmeDisplay();
+      break;
+    case 'translateReadmeError':
+      translateReadmeBtn.disabled = false;
+      translateReadmeBtn.textContent = '翻译';
+      readmeBody.innerHTML = '<div class="error-state">' + esc(msg.message) + '</div>';
       break;
     case 'error':
       summaryBody.innerHTML = '<div class="error-state">' + esc(msg.message) + '</div>';
@@ -506,10 +618,10 @@ function stripHtml(html: string): string {
     .replace(/<\/(p|h[1-6]|li|tr|div|section|article)>/gi, '\n')
     .replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
+    .replace(/&/g, '&')
+    .replace(/</g, '<')
+    .replace(/>/g, '>')
+    .replace(/"/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/\n{3,}/g, '\n\n')
     .trim();

@@ -3,10 +3,6 @@
 > **浏览 VS Code 扩展市场，自动翻译扩展详情为中文，AI 总结用途/收费/用法。**
 > **让不擅长英语的用户也能轻松看懂扩展的功能和收费信息。**
 
-![Visual Studio Marketplace Version](https://img.shields.io/visual-studio-marketplace/v/ext-trans-picker.ext-trans-picker)
-![Visual Studio Marketplace Installs](https://img.shields.io/visual-studio-marketplace/i/ext-trans-picker.ext-trans-picker)
-![License](https://img.shields.io/badge/license-MIT-blue)
-
 ---
 
 ## 📺 演示
@@ -192,6 +188,18 @@ npm run package
 - 所有翻译源提供者（DeepSeek、DeepL、Google、LibreTranslate）
 - VS Code 扩展生态
 - 所有使用和贡献的用户
+
+---
+
+## 📝 更新日志
+
+### v0.2.5
+- 🎯 **设置面板置顶**：点击设置后，设置面板置顶显示在扩展列表上方，收起后不影响列表浏览
+- 📄 **扩展详情原文展示**：详情页 AI 总结下方显示扩展原文，点击「翻译」按钮可将原文翻译为中文
+- 🐛 修复已知问题，提升稳定性
+
+### v0.2.4
+- 首次发布
 
 ---
 

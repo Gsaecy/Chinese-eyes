@@ -329,7 +329,7 @@ body{font-family:var(--vscode-font-family);font-size:13px;color:var(--fg);backgr
 @keyframes spin{to{transform:rotate(360deg)}}
 .load-more{padding:6px;text-align:center;background:transparent;color:var(--link);border:1px dashed var(--border);border-radius:6px;cursor:pointer;font-size:11px;margin:4px 0}
 .load-more:hover{border-color:var(--link);background:rgba(0,122,204,.08)}
-.settings-area{margin-top:12px;padding:10px;background:var(--card);border:1px solid var(--border);border-radius:6px;display:none}
+.settings-area{margin-top:12px;padding:10px;background:var(--card);border:1px solid var(--border);border-radius:6px;display:none;position:sticky;top:0;z-index:10;box-shadow:0 4px 12px rgba(0,0,0,.25)}
 .settings-area.show{display:block}
 .settings-area h3{font-size:12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;color:var(--sub)}
 .settings-area h3 .close{cursor:pointer;color:var(--link);font-weight:400;font-size:11px}
@@ -377,20 +377,6 @@ body{font-family:var(--vscode-font-family);font-size:13px;color:var(--fg);backgr
   </div>
 </div>
 
-<div id="listArea">
-  <div class="welcome-area" id="welcomeArea">
-    <div class="welcome-content">
-      <h2>👋 欢迎使用扩展选择助手</h2>
-      <p>AI 智能总结 + 翻译，帮助你快速了解 VS Code 扩展</p>
-      <button id="loadExtensionsBtn" class="primary-btn">📦 浏览扩展</button>
-      <div style="margin-top:16px;font-size:12px;color:var(--sub)">
-        <strong style="color:var(--warning)">⚠️ 首次使用请先配置 API Key</strong><br>
-        点击右上角 ⚙ 设置 → 选择 DeepSeek/OpenAI 兼容 → 填入 Key
-      </div>
-    </div>
-  </div>
-</div>
-
 <div class="settings-area" id="settingsArea">
   <h3>设置 <span class="close" id="closeSettings">收起</span></h3>
   <div class="field">
@@ -426,6 +412,20 @@ body{font-family:var(--vscode-font-family);font-size:13px;color:var(--fg);backgr
     1. DeepSeek：注册 <a data-url="https://platform.deepseek.com/">platform.deepseek.com</a> → 创建 API Key<br>
     2. OpenAI 兼容：填入 endpoint（如阿里云 DashScope、Moonshot、Together 等）+ 对应模型名<br>
     3. 仅翻译：DeepL/Google/LibreTranslate 也可使用，但不能 AI 总结
+  </div>
+</div>
+
+<div id="listArea">
+  <div class="welcome-area" id="welcomeArea">
+    <div class="welcome-content">
+      <h2>👋 欢迎使用扩展选择助手</h2>
+      <p>AI 智能总结 + 翻译，帮助你快速了解 VS Code 扩展</p>
+      <button id="loadExtensionsBtn" class="primary-btn">📦 浏览扩展</button>
+      <div style="margin-top:16px;font-size:12px;color:var(--sub)">
+        <strong style="color:var(--warning)">⚠️ 首次使用请先配置 API Key</strong><br>
+        点击右上角 ⚙ 设置 → 选择 DeepSeek/OpenAI 兼容 → 填入 Key
+      </div>
+    </div>
   </div>
 </div>
 
