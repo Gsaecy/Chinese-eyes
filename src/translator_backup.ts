@@ -1,6 +1,6 @@
 import * as https from 'https';
 import * as http from 'http';
-import { TranslationConfig, TranslationProvider } from './types';
+import { TranslationConfig } from './types';
 
 /**
  * 翻译服务模块

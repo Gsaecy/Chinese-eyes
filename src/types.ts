@@ -75,7 +75,7 @@ export interface ExtensionItem {
   pricingStatus: PricingStatus;
   /** 定价信息原始文本 */
   pricingInfo?: string;
-  /** 详细页 URL */
+  /** Marketplace Content.Details 资源 URL */
   detailUrl?: string;
   /** 仓库 URL */
   repositoryUrl?: string;

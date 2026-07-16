@@ -69,12 +69,6 @@ const CIPHERS_GCM = [
   'AES256-GCM-SHA384',           // TLS 1.2
 ];
 
-// Level 4: 极宽松 fallback（兼容老旧服务器）
-const CIPHERS_LEGACY = [
-  'ECDHE-RSA-DES-CBC3-SHA',      // 3DES (极少数情况需要)
-  'DES-CBC3-SHA',                // 3DES
-];
-
 // ============================================================
 //  SSL_OP 常量（Node.js 某些版本的类型定义缺失，使用数值）
 // ============================================================
@@ -310,8 +304,6 @@ async function _httpsRequestWithRetry(
   timeout: number = 15000,
   retryCount: number = 0
 ): Promise<{ statusCode: number; headers: http.IncomingHttpHeaders; body: string }> {
-  const urlObj = new URL(targetUrl);
-
   // 最大总超时保护：整个链路上限 = timeout * 2（防止递归挂死）
   if (retryCount === 0) {
     return _requestWithGuard(targetUrl, method, headers, body, timeout, retryCount);
@@ -344,7 +336,7 @@ async function _requestWithGuard(
   const isWindows = process.platform === 'win32';
   const startLevel = getAgentLevelForHost(host);
   let agent: https.Agent | undefined;
-  let currentLevel = startLevel;
+  const currentLevel = startLevel;
 
   if (isHttps && isWindows) {
     try {
@@ -690,7 +682,9 @@ function forwardProxyRequest(
         try {
           if (enc === 'gzip') result = require('zlib').gunzipSync(result);
           else if (enc === 'deflate') result = require('zlib').inflateSync(result);
-        } catch (e) {}
+        } catch {
+          // 解压失败时保留原始响应体。
+        }
         resolve({
           statusCode: res.statusCode || 0,
           headers: res.headers,

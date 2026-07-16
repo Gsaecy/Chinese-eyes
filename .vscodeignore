@@ -9,7 +9,6 @@ tsconfig*.json
 **/*.map
 **/*.ts
 **/*.d.ts
-node_modules/**
 
 # 测试与脚本（包含本地诊断脚本）
 scripts/**
