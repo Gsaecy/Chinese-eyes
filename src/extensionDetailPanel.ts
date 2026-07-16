@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { Translator } from './translator';
 import { ExtensionItem } from './types';
 import { getExtensionReadme } from './marketplaceApi';
+import { prepareMarkdown, renderMarkdown, translateMarkdownDocument } from './readmePipeline';
 
 /**
  * 扩展详情面板（在主编辑区独立 webview panel）
@@ -19,8 +20,8 @@ export class ExtensionDetailPanel {
   private readonly _item: ExtensionItem;
   private _disposables: vscode.Disposable[] = [];
 
-  private _originalReadme = '';
-  private _translatedReadme = '';
+  private _originalReadmeMarkdown = '';
+  private _translatedReadmeMarkdown = '';
   private _summaryZh = '';
   private _summaryEn = '';
 
@@ -96,12 +97,16 @@ export class ExtensionDetailPanel {
       const readme = await getExtensionReadme(
         this._item.publisher,
         this._item.extensionName || this._item.id.split('.').slice(1).join('.'),
-        this._item.readmeUrl
+        {
+          detailUrl: this._item.detailUrl,
+          readmeUrl: this._item.readmeUrl,
+          description: this._item.description,
+        }
       );
-      this._originalReadme = readme || '';
+      this._originalReadmeMarkdown = readme || '';
       // 将原文 README 发送到 webview 显示
-      if (this._originalReadme) {
-        this.post({ type: 'originalReadme', content: this._originalReadme });
+      if (this._originalReadmeMarkdown) {
+        this.post({ type: 'originalReadme', ...prepareMarkdown(this._originalReadmeMarkdown) });
       }
     } catch (err: any) {
       // README 获取失败不影响使用，AI 总结会使用 description
@@ -116,7 +121,11 @@ export class ExtensionDetailPanel {
 
   private async requestSummary(): Promise<void> {
     if (this._summaryZh && this._summaryEn) {
-      this.post({ type: 'summaryDone', summaryZh: this._summaryZh, summaryEn: this._summaryEn });
+      this.post({
+        type: 'summaryDone',
+        summaryZhHtml: renderMarkdown(this._summaryZh),
+        summaryEnHtml: renderMarkdown(this._summaryEn),
+      });
       return;
     }
     if (!this._translator.canSummarize()) {
@@ -128,8 +137,7 @@ export class ExtensionDetailPanel {
     }
     this.post({ type: 'summarizing' });
     try {
-      const isHtml = /<\w+/.test(this._originalReadme);
-      const text = (isHtml ? stripHtml(this._originalReadme) : this._originalReadme) || this._item.description;
+      const text = this._originalReadmeMarkdown || this._item.description;
       if (!text || !text.trim()) {
         this.post({
           type: 'summaryError',
@@ -143,7 +151,11 @@ export class ExtensionDetailPanel {
       // 生成英文总结
       const summaryEn = await this._translator.summarizeEn(text);
       this._summaryEn = summaryEn;
-      this.post({ type: 'summaryDone', summaryZh: this._summaryZh, summaryEn: this._summaryEn });
+      this.post({
+        type: 'summaryDone',
+        summaryZhHtml: renderMarkdown(this._summaryZh),
+        summaryEnHtml: renderMarkdown(this._summaryEn),
+      });
     } catch (err: any) {
       this.post({
         type: 'summaryError',
@@ -171,7 +183,12 @@ export class ExtensionDetailPanel {
           );
           break;
         case 'openUrl':
-          if (msg.url) vscode.env.openExternal(vscode.Uri.parse(msg.url));
+          if (msg.url) {
+            const uri = vscode.Uri.parse(String(msg.url));
+            if (uri.scheme === 'http' || uri.scheme === 'https') {
+              vscode.env.openExternal(uri);
+            }
+          }
           break;
         case 'openMarketplace':
           // 在 VS Code 扩展市场里显示该扩展
@@ -184,21 +201,25 @@ export class ExtensionDetailPanel {
   }
 
   private async handleTranslateReadme(): Promise<void> {
-    if (!this._originalReadme) {
+    if (!this._originalReadmeMarkdown) {
       this.post({ type: 'translateReadmeError', message: '没有可翻译的原文内容' });
       return;
     }
-    if (this._translatedReadme) {
-      this.post({ type: 'translateReadmeDone', translated: this._translatedReadme });
+    if (this._translatedReadmeMarkdown) {
+      this.post({
+        type: 'translateReadmeDone',
+        ...prepareMarkdown(this._translatedReadmeMarkdown),
+      });
       return;
     }
     this.post({ type: 'translatingReadme' });
     try {
-      const isHtml = /<\w+/.test(this._originalReadme);
-      const text = isHtml ? stripHtml(this._originalReadme) : this._originalReadme;
-      const translated = await this._translator.translateMarkdown(text);
-      this._translatedReadme = translated;
-      this.post({ type: 'translateReadmeDone', translated });
+      const translated = await translateMarkdownDocument(
+        this._originalReadmeMarkdown,
+        this._translator,
+      );
+      this._translatedReadmeMarkdown = translated.markdown;
+      this.post({ type: 'translateReadmeDone', ...translated });
     } catch (err: any) {
       this.post({ type: 'translateReadmeError', message: err.message || String(err) });
     }
@@ -348,21 +369,32 @@ const translateReadmeBtn = el('translateReadmeBtn');
 
 let state = {
   item: null,
-  summaryZh: '',     // AI 总结（中文）
-  summaryEn: '',     // AI 总结（英文原文）
+  summaryZhHtml: '', // 已在 extension host 渲染并净化
+  summaryEnHtml: '',
   summaryView: 'zh', // 当前显示语言 zh/en
-  originalReadme: '',     // 原文 README（从 extension 侧传过来）
-  translatedReadme: '',   // 翻译后 README
+  originalReadmeMarkdown: '',
+  originalReadmeHtml: '',
+  translatedReadmeMarkdown: '',
+  translatedReadmeHtml: '',
   readmeView: 'original', // 当前显示原文/翻译
 };
 
 function esc(s){
   return String(s == null ? '' : s)
-    .replace(/&/g, '&')
-    .replace(/</g, '<')
-    .replace(/>/g, '>')
-    .replace(/"/g, '"')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function safeHttpUrl(value){
+  try {
+    const url = new URL(String(value || ''));
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : '';
+  } catch {
+    return '';
+  }
 }
 
 function fmtCount(n){
@@ -372,61 +404,6 @@ function fmtCount(n){
   return String(n);
 }
 
-function md(text){
-  if (!text) return '';
-  // 已是 HTML，直接信任
-  if (/<(html|body|div|p|h[1-6]|table|pre|img|a|ul|ol)/i.test(text)) return text;
-  let h = text;
-  h = h.replace(/\\r\\n/g, '\\n');
-  // fenced code
-  h = h.replace(/\`\`\`(\\w*)\\n([\\s\\S]*?)\`\`\`/g, (_, lang, code) =>
-    '<pre><code>' + esc(code) + '</code></pre>'
-  );
-  // images
-  h = h.replace(/!\\[([^\\]]*)\\]\\(([^)]+)\\)/g, (_, alt, url) =>
-    '<img src="' + esc(url) + '" alt="' + esc(alt) + '">'
-  );
-  // links
-  h = h.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, (_, txt, url) =>
-    '<a href="' + esc(url) + '" target="_blank">' + esc(txt) + '</a>'
-  );
-  // inline code
-  h = h.replace(/\`([^\`\\n]+)\`/g, (_, c) => '<code>' + esc(c) + '</code>');
-  // bold / italic
-  h = h.replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>');
-  h = h.replace(/(^|[^*])\\*([^*\\n]+)\\*/g, '$1<em>$2</em>');
-  // headings
-  h = h.replace(/^###### (.+)$/gm, '<h6>$1</h6>');
-  h = h.replace(/^##### (.+)$/gm, '<h5>$1</h5>');
-  h = h.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
-  h = h.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-  h = h.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-  h = h.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-  // hr
-  h = h.replace(/^---+$/gm, '<hr>');
-  // blockquote
-  h = h.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');
-  // lists
-  h = h.replace(/^[*\\-] (.+)$/gm, '<li>$1</li>');
-  h = h.replace(/^\\d+\\. (.+)$/gm, '<li>$1</li>');
-  h = h.replace(/((?:<li>[\\s\\S]*?<\\/li>\\s*)+)/g, '<ul>$1</ul>');
-  // tables
-  h = h.replace(/^\\|(.+)\\|$/gm, (line) => {
-    const cells = line.split('|').map(c => c.trim()).filter(Boolean);
-    if (cells.length && /^[-: ]+$/.test(cells[0])) return '';
-    return '<tr>' + cells.map(c => '<td>' + c + '</td>').join('') + '</tr>';
-  });
-  h = h.replace(/((?:<tr>.*?<\\/tr>\\s*)+)/g, '<table>$1</table>');
-  // paragraphs
-  const segs = h.split(/\\n{2,}/);
-  return segs.map(s => {
-    const t = s.trim();
-    if (!t) return '';
-    if (/^<(h[1-6]|ul|ol|li|table|tr|td|pre|blockquote|hr|p|div|img)/i.test(t)) return t;
-    return '<p>' + t.replace(/\\n/g, '<br>') + '</p>';
-  }).join('\\n');
-}
-
 function renderHeader(item){
   if (!item) return;
   const badge = item.pricingStatus === 'paid'
@@ -434,16 +411,13 @@ function renderHeader(item){
     : item.pricingStatus === 'maybePaid'
       ? '<span class="badge maybe">可能付费</span>'
       : '<span class="badge free">免费</span>';
-  const iconHtml = item.iconUrl
-    ? '<img class="icon" src="' + esc(item.iconUrl) + '" alt="">'
+  const iconUrl = safeHttpUrl(item.iconUrl);
+  const repositoryUrl = safeHttpUrl(item.repositoryUrl);
+  const licenseUrl = safeHttpUrl(item.licenseUrl);
+  const iconHtml = iconUrl
+    ? '<img class="icon" src="' + esc(iconUrl) + '" alt="">'
     : '<div class="icon-fallback">' + esc((item.displayName || '?').slice(0,1).toUpperCase()) + '</div>';
   const desc = item.description ? '<div class="desc">' + esc(item.description) + '</div>' : '';
-  const repo = item.repositoryUrl
-    ? '<a href="' + esc(item.repositoryUrl) + '" target="_blank">代码仓库</a>'
-    : '';
-  const license = item.licenseUrl
-    ? '<a href="' + esc(item.licenseUrl) + '" target="_blank">许可证</a>'
-    : '';
   headerBlock.innerHTML =
     iconHtml
     + '<div class="info">'
@@ -459,8 +433,8 @@ function renderHeader(item){
     + '<div class="actions">'
       + '<button class="primary" id="installBtn">在 VS Code 中安装</button>'
       + '<button id="openMarketBtn">打开市场页 ↗</button>'
-      + (repo ? '<a href="' + esc(item.repositoryUrl) + '" target="_blank">代码仓库 ↗</a>' : '')
-      + (license ? '<a href="' + esc(item.licenseUrl) + '" target="_blank">许可证 ↗</a>' : '')
+      + (repositoryUrl ? '<a href="' + esc(repositoryUrl) + '" target="_blank">代码仓库 ↗</a>' : '')
+      + (licenseUrl ? '<a href="' + esc(licenseUrl) + '" target="_blank">许可证 ↗</a>' : '')
     + '</div>'
     + '</div>';
   const installBtn = el('installBtn');
@@ -470,9 +444,9 @@ function renderHeader(item){
 }
 
 function updateSummaryDisplay(){
-  const text = state.summaryView === 'zh' ? state.summaryZh : state.summaryEn;
-  if (text) {
-    summaryBody.innerHTML = '<div class="section-body markdown">' + md(text) + '</div>';
+  const html = state.summaryView === 'zh' ? state.summaryZhHtml : state.summaryEnHtml;
+  if (html) {
+    summaryBody.innerHTML = '<div class="section-body markdown">' + html + '</div>';
   } else {
     summaryBody.innerHTML = '<div class="empty-state">尚未生成 AI 总结</div>';
   }
@@ -488,10 +462,12 @@ function setSummaryView(mode){
 // ====== README 原文与翻译 ======
 
 function updateReadmeDisplay(){
-  const text = state.readmeView === 'translated' ? state.translatedReadme : state.originalReadme;
-  if (text) {
+  const html = state.readmeView === 'translated'
+    ? state.translatedReadmeHtml
+    : state.originalReadmeHtml;
+  if (html) {
     readmeSection.style.display = '';
-    readmeBody.innerHTML = md(text);
+    readmeBody.innerHTML = html;
   } else {
     // 如果没有原文，隐藏整个区块
     readmeSection.style.display = 'none';
@@ -504,7 +480,7 @@ function setReadmeView(mode){
 }
 
 translateReadmeBtn.addEventListener('click', () => {
-  if (state.translatedReadme) {
+  if (state.translatedReadmeMarkdown) {
     // 已有翻译，在原文/翻译之间切换
     if (state.readmeView === 'original') {
       setReadmeView('translated');
@@ -533,8 +509,8 @@ generateSummaryBtn.addEventListener('click', () => {
 regenSummaryBtn.addEventListener('click', () => {
   regenSummaryBtn.disabled = true;
   regenSummaryBtn.textContent = '生成中…';
-  state.summaryZh = '';
-  state.summaryEn = '';
+  state.summaryZhHtml = '';
+  state.summaryEnHtml = '';
   vscode.postMessage({type:'requestSummary'});
 });
 
@@ -547,15 +523,12 @@ window.addEventListener('message', (event) => {
       if (msg.openSummary){
         summaryBody.innerHTML = '<div class="loading-state"><span class="spinner"></span>生成 AI 总结中…</div>';
       }
-      // 如果有 originalReadme，显示原文区块
-      if (msg.originalReadme) {
-        state.originalReadme = msg.originalReadme;
-        updateReadmeDisplay();
-      }
       break;
     case 'originalReadme':
-      state.originalReadme = msg.content || '';
-      state.translatedReadme = '';
+      state.originalReadmeMarkdown = msg.markdown || '';
+      state.originalReadmeHtml = msg.html || '';
+      state.translatedReadmeMarkdown = '';
+      state.translatedReadmeHtml = '';
       state.readmeView = 'original';
       translateReadmeBtn.textContent = '翻译';
       updateReadmeDisplay();
@@ -564,8 +537,8 @@ window.addEventListener('message', (event) => {
       summaryBody.innerHTML = '<div class="loading-state"><span class="spinner"></span>AI 总结生成中…</div>';
       break;
     case 'summaryDone':
-      state.summaryZh = msg.summaryZh || '';
-      state.summaryEn = msg.summaryEn || '';
+      state.summaryZhHtml = msg.summaryZhHtml || '';
+      state.summaryEnHtml = msg.summaryEnHtml || '';
       updateSummaryDisplay();
       generateSummaryBtn.disabled = false;
       generateSummaryBtn.textContent = '生成 AI 总结';
@@ -585,7 +558,8 @@ window.addEventListener('message', (event) => {
       translateReadmeBtn.textContent = '翻译中…';
       break;
     case 'translateReadmeDone':
-      state.translatedReadme = msg.translated || '';
+      state.translatedReadmeMarkdown = msg.markdown || '';
+      state.translatedReadmeHtml = msg.html || '';
       state.readmeView = 'translated';
       translateReadmeBtn.disabled = false;
       translateReadmeBtn.textContent = '显示原文';
@@ -607,24 +581,6 @@ vscode.postMessage({type:'ready'});
 </body>
 </html>`;
   }
-}
-
-/** 简单 HTML → 纯文本（用于翻译/总结源材料） */
-function stripHtml(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|h[1-6]|li|tr|div|section|article)>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&/g, '&')
-    .replace(/</g, '<')
-    .replace(/>/g, '>')
-    .replace(/"/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
 }
 
 function getNonce(): string {

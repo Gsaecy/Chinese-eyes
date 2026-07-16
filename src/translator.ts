@@ -1,3 +1,5 @@
+import MarkdownIt from 'markdown-it';
+
 export interface TranslationConfig {
   provider: string;
   apiKey?: string;
@@ -81,7 +83,7 @@ export class Translator {
     if (!markdown || !markdown.trim()) return markdown;
 
     if (!this.isLLMProvider() || !this.config.apiKey) {
-      return localTranslate(markdown);
+      return localTranslateMarkdown(markdown);
     }
 
     const { endpoint, model } = this.resolveLLMConfig();
@@ -644,7 +646,108 @@ const PAID_KEYS = new Set([
   'watermark', 'ads', 'commercial',
 ]);
 
-function localTranslate(text: string): string {
+const markdownStructureParser = new MarkdownIt({ html: true });
+
+/**
+ * 本地 Markdown 翻译：保护代码、URL、链接目标和 HTML 标签，
+ * 只将其余自然语言交给词典翻译。
+ */
+function localTranslateMarkdown(markdown: string): string {
+  if (!markdown || !markdown.trim()) return markdown;
+
+  const protectedSegments: string[] = [];
+  const protect = (segment: string): string => {
+    const index = protectedSegments.push(segment) - 1;
+    return `\uE000${index.toString(36)}\uE001`;
+  };
+
+  // 由 Markdown 解析器确定代码块的真实行范围，兼容列表、块引用和自动闭合围栏。
+  const codeLines = getMarkdownCodeLines(markdown);
+  let protectedMarkdown = splitMarkdownLines(markdown).map((line, index) =>
+    codeLines.has(index) ? protect(line) : line,
+  ).join('');
+
+  // 先保护可跨行的 HTML 注释及不应翻译的原始内容块。
+  protectedMarkdown = protectedMarkdown.replace(
+    /<!--[\s\S]*?-->|<(script|style|pre|code)\b[^>]*>[\s\S]*?<\/\1\s*>|<\/?[A-Za-z][^>]*>/gi,
+    (segment) => protect(segment),
+  );
+
+  protectedMarkdown = splitMarkdownLines(protectedMarkdown)
+    .map((line) => protectMarkdownInlineSegments(line, protect))
+    .join('');
+
+  const paidWarning = containsPaidKeyword(protectedMarkdown);
+  const translated = localTranslate(protectedMarkdown, false).replace(
+    /\uE000([0-9a-z]+)\uE001/g,
+    (_placeholder, index: string) => protectedSegments[parseInt(index, 36)] ?? '',
+  );
+
+  if (!paidWarning) return translated;
+  return translated + (translated.endsWith('\n') ? '\n' : '\n\n') + '⚠️[注意收费]';
+}
+
+function protectMarkdownInlineSegments(
+  line: string,
+  protect: (segment: string) => string,
+): string {
+  let result = line;
+
+  // 行内代码。同长度反引号作为开闭边界。
+  result = result.replace(/(`+)(.*?)\1/g, (segment) => protect(segment));
+
+  // HTML 标签和 autolink 中的标签名、属性、URL 不参与翻译。
+  result = result.replace(/<\/?[A-Za-z][^>]*>|<![A-Za-z][^>]*>/g, (segment) => protect(segment));
+
+  // Markdown 链接/图片的目标地址或引用 ID。
+  result = result.replace(
+    /(\]\s*)(\((?:\\.|[^)])*\)|\[[^\]]*\])/g,
+    (_match, prefix: string, destination: string) => prefix + protect(destination),
+  );
+
+  // 引用式链接定义的 URL 和可选 title。
+  result = result.replace(
+    /^(\s{0,3})(\[[^\]]+\])(:\s*)(\S+(?:\s+["'(].*)?)(\r\n|\n|\r)?$/,
+    (
+      _match,
+      indentation: string,
+      referenceId: string,
+      separator: string,
+      destination: string,
+      newline = '',
+    ) => indentation + protect(referenceId) + separator + protect(destination) + newline,
+  );
+
+  // 裸 URL 和 HTML entity。
+  result = result.replace(/\b(?:https?:\/\/|mailto:)[^\s<>"']+/gi, (segment) => protect(segment));
+  result = result.replace(/&(?:#\d+|#x[\da-f]+|[a-z][\da-z]+);/gi, (segment) => protect(segment));
+  return result;
+}
+
+function splitMarkdownLines(markdown: string): string[] {
+  return markdown.match(/.*(?:\r\n|\n|\r|$)/g)?.filter(Boolean) ?? [];
+}
+
+function getMarkdownCodeLines(markdown: string): Set<number> {
+  const codeLines = new Set<number>();
+  for (const token of markdownStructureParser.parse(markdown, {})) {
+    if ((token.type !== 'fence' && token.type !== 'code_block') || !token.map) continue;
+    for (let line = token.map[0]; line < token.map[1]; line++) {
+      codeLines.add(line);
+    }
+  }
+  return codeLines;
+}
+
+function containsPaidKeyword(text: string): boolean {
+  const lowerText = text.toLowerCase();
+  for (const keyword of PAID_KEYS) {
+    if (lowerText.includes(keyword)) return true;
+  }
+  return false;
+}
+
+function localTranslate(text: string, appendPaidWarning: boolean = true): string {
   if (!text || !text.trim()) return text;
 
   // 检测是否已是中文（超过50%中文字符则跳过）
@@ -660,14 +763,9 @@ function localTranslate(text: string): string {
   }
 
   // 检测收费关键词
-  let paidWarning = '';
-  const lowerText = text.toLowerCase();
-  for (const kw of PAID_KEYS) {
-    if (lowerText.includes(kw)) {
-      paidWarning = ' ⚠️[注意收费]';
-      break;
-    }
-  }
+  const paidWarning = appendPaidWarning && containsPaidKeyword(text)
+    ? ' ⚠️[注意收费]'
+    : '';
 
   // 长词优先替换（使用预排序数组）
   let result = text;
