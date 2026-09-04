@@ -1200,7 +1200,8 @@ window.addEventListener('message', (event) => {
       state.hasApiKey = !!msg.hasApiKey;
       state.canSummarize = !!msg.canSummarize;
       renderCapability();
-      sortChips.forEach((c) => c.classList.toggle('active', c.getAttribute('data-sort') === state.sortBy));
+      // 主页初始状态：不高亮任何排序标签
+      sortChips.forEach((c) => c.classList.remove('active'));
       break;
     case 'welcome':
       // 显示欢迎页（初始状态 / 清除搜索后）
@@ -1209,7 +1210,8 @@ window.addEventListener('message', (event) => {
       state.hasMore = false;
       state.descMap = {};
       if (msg.sortBy) state.sortBy = msg.sortBy;
-      sortChips.forEach((c) => c.classList.toggle('active', c.getAttribute('data-sort') === state.sortBy));
+      // 主页：排序标签不高亮
+      sortChips.forEach((c) => c.classList.remove('active'));
       renderWelcome();
       break;
     case 'loading':
