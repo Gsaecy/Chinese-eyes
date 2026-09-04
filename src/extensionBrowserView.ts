@@ -1181,8 +1181,7 @@ window.addEventListener('message', (event) => {
       renderCapability();
       settingsArea.classList.remove('show');
       showToast('设置已保存', 'success');
-      // 重新搜索以应用新的翻译能力
-      vscode.postMessage({type:'search', query: state.query});
+      // 不自动重新搜索，避免保存后跳转到热门列表页
       break;
     case 'error':
       state.loading = false;
