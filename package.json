@@ -2,7 +2,7 @@
   "name": "ext-trans-picker",
   "displayName": "扩展选择助手",
   "description": "Browse VS Code marketplace, auto-translate details to Chinese, AI summary for usage/pricing/guide",
-  "version": "0.3.9",
+  "version": "0.4.0",
   "publisher": "honor-world",
   "license": "GPL-3.0",
   "activationEvents": [
