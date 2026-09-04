@@ -1102,12 +1102,9 @@ if (applyKeyBtn) {
   });
 }
 
-/** 设置作为独立页面：展开时隐藏搜索/排序/列表，只显示设置内容 */
+/** 设置面板展开/收起（保留顶部工具栏，可随时点主页返回） */
 function setSettingsPageVisible(show){
   settingsArea.classList.toggle('show', show);
-  document.querySelectorAll('.search-row, .toolbar, #sortSeg, #capabilityBar, #listArea').forEach((n) => {
-    n.style.display = show ? 'none' : '';
-  });
 }
 
 settingsBtn.addEventListener('click', () => {
