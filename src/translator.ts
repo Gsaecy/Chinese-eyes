@@ -247,26 +247,44 @@ export class Translator {
 
     if (this.isLLMProvider() && this.config.apiKey) {
       const { endpoint, model } = this.resolveLLMConfig();
-
-      const systemPrompt = [
-        '你是一个专业的 Markdown 翻译器，把英文 Markdown 文档翻译成简体中文 Markdown。',
-        '规则：',
-        '1. 完整保留原 Markdown 结构（标题、列表、表格、代码块、链接、图片、HTML 标签）',
-        '2. 只翻译自然语言内容，不要翻译代码块、行内代码、命令、URL、品牌名',
-        '3. 保留技术术语（API/SDK/CLI/IDE 等）不翻译',
-        '4. 翻译后直接输出 Markdown，不要包在 ```markdown 代码块里，不要寒暄说明',
-        '5. 如果原文已是中文则原样返回',
-        '6. 对涉及收费的句子（含 paid/pricing/subscription/trial/premium/license/billing 等），在该句末尾追加 ⚠️',
-      ].join('\n');
-
-      const out = await this.chatCompletion(endpoint, model, systemPrompt, markdown.substring(0, 16000), 0.1, 6000);
-      if (!out) throw new Error('翻译返回为空');
-      return { text: out };
+      try {
+        const out = await this.translateMarkdownViaLLM(endpoint, model, markdown);
+        if (out) return { text: out };
+      } catch (err) {
+        console.warn('[chineseEyes] LLM Markdown 翻译失败，降级到智能翻译:', err);
+      }
     }
 
-    // 非 LLM：智能翻译（免费在线 / 本地词典）
+    // LLM 不可用/失败：智能翻译（免费在线 / 本地词典）
     const res = await this.translateSmart(markdown, proxyUrl);
     return { text: res.text, warning: res.warning };
+  }
+
+  /** LLM 分段翻译 Markdown（长文分块避免超限/截断），失败抛出异常 */
+  private async translateMarkdownViaLLM(
+    endpoint: string,
+    model: string,
+    markdown: string
+  ): Promise<string> {
+    const systemPrompt = [
+      '你是一个专业的 Markdown 翻译器，把英文 Markdown 文档翻译成简体中文 Markdown。',
+      '规则：',
+      '1. 完整保留原 Markdown 结构（标题、列表、表格、代码块、链接、图片、HTML 标签）',
+      '2. 只翻译自然语言内容，不要翻译代码块、行内代码、命令、URL、品牌名',
+      '3. 保留技术术语（API/SDK/CLI/IDE 等）不翻译',
+      '4. 翻译后直接输出 Markdown，不要包在 ```markdown 代码块里，不要寒暄说明',
+      '5. 如果原文已是中文则原样返回',
+      '6. 对涉及收费的句子（含 paid/pricing/subscription/trial/premium/license/billing 等），在该句末尾追加 ⚠️',
+    ].join('\n');
+
+    const chunks = splitMarkdownForLLM(markdown, 6000);
+    const parts: string[] = [];
+    for (const chunk of chunks) {
+      const out = await this.chatCompletion(endpoint, model, systemPrompt, chunk, 0.1, 4096, 60000);
+      if (!out) throw new Error('模型返回空内容');
+      parts.push(out);
+    }
+    return parts.join('\n\n');
   }
 
   clearCache(): void {
@@ -395,13 +413,24 @@ export class Translator {
 
     const result = await response.json() as {
       error?: { message?: string };
-      choices?: Array<{ message?: { content?: string } }>;
+      choices?: Array<{ message?: { content?: string; reasoning_content?: string }; text?: string }>;
+      output_text?: string;
     };
     if (result.error) {
       throw new Error(result.error.message || JSON.stringify(result.error));
     }
-    const out: string | undefined = result.choices?.[0]?.message?.content;
-    return out ? String(out).trim() : '';
+    const first = result.choices?.[0];
+    const content: string | undefined =
+      first?.message?.content ?? first?.text ?? result.output_text;
+    if (!content) {
+      // reasoning 模型把内容放在 reasoning_content 里，给用户明确指引
+      if (first?.message?.reasoning_content) {
+        throw new Error('模型返回的是推理内容（reasoning 模型）。请在设置中换成对话模型，如 deepseek-chat / qwen-plus / gpt-4o-mini。');
+      }
+      console.warn('[chineseEyes] LLM 返回空内容，原始响应:', JSON.stringify(result).slice(0, 500));
+      return '';
+    }
+    return String(content).trim();
   }
 
   private async callTranslationAPI(texts: string[]): Promise<string[]> {
@@ -1125,6 +1154,24 @@ function splitTextForTranslate(text: string, max = 1400): string[] {
   }
   if (cur) parts.push(cur);
   return parts.length > 0 ? parts : [text];
+}
+
+/** 按段落边界切分 Markdown，供 LLM 分段翻译（避免超长输入被截断/拒答） */
+function splitMarkdownForLLM(markdown: string, max = 6000): string[] {
+  if (markdown.length <= max) return [markdown];
+  const parts: string[] = [];
+  const paragraphs = markdown.split(/\n{2,}/);
+  let cur = '';
+  for (const p of paragraphs) {
+    if (cur && cur.length + p.length > max) {
+      parts.push(cur);
+      cur = p;
+    } else {
+      cur = cur ? cur + '\n\n' + p : p;
+    }
+  }
+  if (cur) parts.push(cur);
+  return parts.length > 0 ? parts : [markdown];
 }
 
 /** 免费在线翻译通道 */
