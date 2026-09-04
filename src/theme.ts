@@ -55,9 +55,11 @@ body{
 }
 ::selection{background:var(--accent-soft)}
 
-/* ---------- 卡片 ---------- */
+/* ---------- 卡片（半透明毛玻璃） ---------- */
 .ap-card{
-  background:var(--card);
+  background:var(--glass);
+  backdrop-filter:blur(24px) saturate(180%);
+  -webkit-backdrop-filter:blur(24px) saturate(180%);
   border:1px solid var(--line);
   border-radius:var(--radius-l);
   box-shadow:var(--shadow);

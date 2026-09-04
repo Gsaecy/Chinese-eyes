@@ -488,6 +488,11 @@ body{padding:12px;font-size:13px}
 .home-footer h3{font-size:12px;font-weight:700;margin-bottom:8px}
 .home-link{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--accent);cursor:pointer;text-decoration:none;margin-bottom:8px}
 .home-link:hover{text-decoration:underline}
+/* ===== 设置面板 ===== */
+.help-box{margin-top:12px;padding:14px;background:var(--glass);backdrop-filter:blur(24px) saturate(180%);-webkit-backdrop-filter:blur(24px) saturate(180%);border:1px solid var(--line);border-radius:var(--radius-l);box-shadow:var(--shadow);font-size:11px;line-height:1.9;color:var(--text)}
+.help-box strong{color:var(--accent);display:inline-flex;align-items:center;gap:5px;font-weight:700}
+.help-box .help-step{display:flex;gap:7px;margin-top:2px}
+.help-box .help-step .n{color:var(--accent);font-weight:700;flex-shrink:0}
 .home-pro{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--text-sub);flex-wrap:wrap;line-height:1.6}
 </style>
 </head>
@@ -565,10 +570,10 @@ body{padding:12px;font-size:13px}
     <button class="ap-btn ap-btn-ghost" id="openSettingsBtn">在 VS Code 设置中打开</button>
   </div>
   <div class="help-box">
-    <strong>${icon('key', 12)} 推荐配置</strong><br>
-    1. 在「Agent 供应商」选品牌（如 DeepSeek / 阿里云 / Kimi）→ 地址和模型自动填好<br>
-    2. 只填 API Key → 点「应用」或「保存」，即可翻译 + AI 总结<br>
-    3. 不填 Key 也能用：免费在线翻译（有道/Google）自动生效；AI 总结需配置 Key
+    <strong>${icon('sparkle', 13)} 推荐配置</strong>
+    <div class="help-step"><span class="n">1</span><span>在「Agent 供应商」选品牌（如 DeepSeek / 阿里云 / Kimi）→ 地址和模型自动填好</span></div>
+    <div class="help-step"><span class="n">2</span><span>只填 API Key → 点「应用」或「保存」，即可翻译 + AI 总结</span></div>
+    <div class="help-step"><span class="n">3</span><span>不填 Key 也能用：免费在线翻译（有道/Google）自动生效；AI 总结需配置 Key</span></div>
   </div>
 </div>
 
