@@ -13,11 +13,34 @@ export function activate(context: vscode.ExtensionContext) {
     const config = vscode.workspace.getConfiguration('chineseEyes');
     translator = new Translator({
       provider: config.get('translationProvider', 'local'),
-      apiKey: config.get('apiKey', ''),
+      apiKey: config.get('apiKey', ''), // 旧版明文兼容值，随后由密钥库覆盖
       targetLanguage: 'zh-CN',
       customEndpoint: config.get('apiEndpoint', ''),
       customModel: config.get('apiModel', ''),
     });
+
+    // API Key 迁移到系统密钥库（SecretStorage），不再存 settings.json 明文
+    (async () => {
+      try {
+        const stored = await context.secrets.get('chineseEyes.apiKey');
+        const legacy = config.get('apiKey', '') as string;
+        if (!stored && legacy) {
+          await context.secrets.store('chineseEyes.apiKey', legacy);
+          await config.update('apiKey', undefined, vscode.ConfigurationTarget.Global);
+          console.log('[chineseEyes] 已将 API Key 从 settings.json 迁移至系统密钥库');
+        } else if (stored && stored !== legacy && translator) {
+          translator.updateConfig({
+            provider: config.get('translationProvider', 'local'),
+            apiKey: stored,
+            targetLanguage: 'zh-CN',
+            customEndpoint: config.get('apiEndpoint', ''),
+            customModel: config.get('apiModel', ''),
+          });
+        }
+      } catch (e: any) {
+        console.warn('[chineseEyes] API Key 迁移失败:', e);
+      }
+    })();
 
     // 注册侧边栏视图（扩展列表）
     provider = new ExtensionBrowserViewProvider(context.extensionUri, translator, context);
@@ -49,17 +72,19 @@ export function activate(context: vscode.ExtensionContext) {
       })
     );
 
-    // 配置变更监听
+    // 配置变更监听（API Key 从系统密钥库读取）
     context.subscriptions.push(
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('chineseEyes') && translator) {
           const c = vscode.workspace.getConfiguration('chineseEyes');
-          translator.updateConfig({
-            provider: c.get('translationProvider', 'local'),
-            apiKey: c.get('apiKey', ''),
-            targetLanguage: 'zh-CN',
-            customEndpoint: c.get('apiEndpoint', ''),
-            customModel: c.get('apiModel', ''),
+          context.secrets.get('chineseEyes.apiKey').then((key) => {
+            translator!.updateConfig({
+              provider: c.get('translationProvider', 'local'),
+              apiKey: key || c.get('apiKey', ''),
+              targetLanguage: 'zh-CN',
+              customEndpoint: c.get('apiEndpoint', ''),
+              customModel: c.get('apiModel', ''),
+            });
           });
         }
       })

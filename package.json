@@ -50,20 +50,13 @@
           ],
           "enumDescriptions": [
             "本地词典（离线、无需 API Key）",
-            "DeepL（需 API Key）",
-            "Google 翻译（需 API Key）",
-            "LibreTranslate（自托管，可选 API Key）",
-            "DeepSeek（需 API Key，支持 AI 总结）",
-            "OpenAI 兼容协议（需自定义 endpoint/model，支持 AI 总结）"
+            "DeepL（仅翻译，需 API Key）",
+            "Google 翻译（仅翻译，需 API Key）",
+            "LibreTranslate（仅翻译，可选 API Key）",
+            "DeepSeek 官方（翻译 + AI 总结，需 API Key）",
+            "OpenAI 兼容协议（OpenAI 官方 / 阿里云 / Kimi / GLM / SiliconFlow 等，需自填 endpoint/model，支持 AI 总结）"
           ],
           "order": 1
-        },
-        "chineseEyes.apiKey": {
-          "type": "string",
-          "default": "",
-          "description": "翻译 API 密钥 (DeepSeek/DeepL/Google/OpenAI 兼容)",
-          "markdownDescription": "翻译 API 密钥",
-          "order": 2
         },
         "chineseEyes.apiEndpoint": {
           "type": "string",

@@ -56,9 +56,11 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
 
   private syncConfig(): TranslationConfig {
     const config = vscode.workspace.getConfiguration('chineseEyes');
+    const legacyKey = config.get('apiKey', '') as string;
     const cfg: TranslationConfig = {
       provider: config.get('translationProvider', 'local'),
-      apiKey: config.get('apiKey', ''),
+      // 密钥库的 Key 由 activate 时注入；这里保留当前 Key，不用空的配置值覆盖
+      apiKey: legacyKey || this._translator.getApiKey(),
       targetLanguage: 'zh-CN',
       customEndpoint: config.get('apiEndpoint', ''),
       customModel: config.get('apiModel', ''),
@@ -96,10 +98,12 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
 
         case 'getSettings': {
           const config = vscode.workspace.getConfiguration('chineseEyes');
+          // API Key 从系统密钥库读取；兼容旧版本 settings.json 明文
+          const storedKey = (await this._context.secrets.get('chineseEyes.apiKey')) || '';
           this.postMessage({
             type: 'settingsData',
             provider: config.get('translationProvider', 'local'),
-            apiKey: config.get('apiKey', ''),
+            apiKey: storedKey || config.get('apiKey', ''),
             endpoint: config.get('apiEndpoint', ''),
             model: config.get('apiModel', ''),
           });
@@ -307,9 +311,12 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
   ): Promise<void> {
     const chConfig = vscode.workspace.getConfiguration('chineseEyes');
     await chConfig.update('translationProvider', provider, vscode.ConfigurationTarget.Global);
-    await chConfig.update('apiKey', apiKey, vscode.ConfigurationTarget.Global);
     await chConfig.update('apiEndpoint', endpoint, vscode.ConfigurationTarget.Global);
     await chConfig.update('apiModel', model, vscode.ConfigurationTarget.Global);
+    // API Key 存入系统密钥库（SecretStorage），不落 settings.json 明文
+    await this._context.secrets.store('chineseEyes.apiKey', apiKey);
+    // 清理旧版本写入 settings.json 的明文 Key
+    await chConfig.update('apiKey', undefined, vscode.ConfigurationTarget.Global);
   }
 
   /** 保存后后台校验模型名是否有效（LLM 供应商 + 已填 Key），结果通知前端显示状态 */
@@ -336,8 +343,7 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
 
     // Guard: LLM 翻译需要 API Key，用户没配置就不应该发请求
     if (this._translator.isLLMProvider()) {
-      const config = vscode.workspace.getConfiguration('chineseEyes');
-      if (!config.get('apiKey', '').trim()) {
+      if (!this._translator.getApiKey().trim()) {
         this.postMessage({
           type: 'error',
           message: '请先在「设置」中配置 API Key，再进行搜索。',

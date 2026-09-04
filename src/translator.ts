@@ -44,6 +44,11 @@ export class Translator {
     this.freeOnlineFailAt = 0;
   }
 
+  /** 当前生效的 API Key（来自系统密钥库，不走 settings.json） */
+  getApiKey(): string {
+    return this.config.apiKey || '';
+  }
+
   /** 批量翻译文本 */
   async translateBatch(texts: string[]): Promise<Record<string, string>> {
     const result: Record<string, string> = {};
