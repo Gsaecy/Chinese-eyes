@@ -358,16 +358,51 @@ export class Translator {
     return { text: result };
   }
 
-  /** 详情页 AI 翻译：整篇走 LLM（不用免费通道），保持基本段落结构，中文块保留；失败抛出异常 */
-  async translateWithAI(markdown: string): Promise<string> {
-    if (!markdown || !markdown.trim()) return markdown;
-    if (!this.isLLMProvider() || !this.config.apiKey) {
-      throw new Error('AI 翻译需要配置 DeepSeek 或 OpenAI 兼容 API Key，请先在设置中配置');
+  /**
+   * 详情页手动翻译（帮用户节省 API Token）：
+   * 1. 短文本：免费在线翻译整篇一次（不逐块、不保结构，避开限流坑），成功即返回
+   * 2. 免费失败/长文本：整篇 AI 翻译
+   * 3. AI 失败/未配置：免费兜底再试一次 → 本地词典
+   */
+  async translateReadme(text: string, proxyUrl?: string): Promise<{ text: string; warning?: string }> {
+    if (!text || !text.trim()) return { text };
+
+    // 1. 短文本免费优先（内部自动跳过超长文本，省 API Token）
+    const free = await this.tryFreeOnlineTranslate(text, proxyUrl);
+    if (free && free.trim() && isRealTranslation(text, free)) {
+      return { text: free };
     }
-    const { endpoint, model } = this.resolveLLMConfig();
-    const out = await this.translateMarkdownViaLLM(endpoint, model, markdown);
-    if (!out || !out.trim()) throw new Error('AI 返回为空');
-    return out;
+
+    // 2. AI 整篇翻译
+    if (this.isLLMProvider() && this.config.apiKey) {
+      const { endpoint, model } = this.resolveLLMConfig();
+      try {
+        const out = await this.translateMarkdownViaLLM(endpoint, model, text);
+        if (out && out.trim()) {
+          return {
+            text: out,
+            warning: text.length <= 1200
+              ? '免费在线翻译不可用，已使用 AI 翻译'
+              : '文档超过免费翻译字数限制，已自动改用 AI 翻译',
+          };
+        }
+      } catch (err) {
+        console.warn('[chineseEyes] AI 翻译失败，尝试免费兜底:', err);
+      }
+    }
+
+    // 3. 免费兜底再试一次（绕过 60s 冷却，确保 AI 失败时免费能顶上一次）
+    this.freeOnlineFailAt = 0;
+    const free2 = await this.tryFreeOnlineTranslate(text, proxyUrl);
+    if (free2 && free2.trim() && isRealTranslation(text, free2)) {
+      return { text: free2, warning: 'AI 翻译不可用，已使用免费在线翻译' };
+    }
+
+    // 4. 本地词典
+    return {
+      text: localTranslate(text),
+      warning: 'AI 与免费翻译均不可用，已使用本地词典（仅翻译常用词汇）。建议在设置中检查 API Key 或网络后重试',
+    };
   }
 
   /** LLM 分段翻译 Markdown（长文分块避免超限/截断），失败抛出异常 */

@@ -204,10 +204,10 @@ export class ExtensionDetailPanel {
         this.post({ type: 'translateReadmeDone', translated: text, warning: '原文已是中文，无需翻译' });
         return;
       }
-      // 点击翻译后全部使用 AI 翻译（不走免费通道），译文替换原文显示
-      const translated = await this._translator.translateWithAI(text);
-      this._translatedReadme = translated;
-      this.post({ type: 'translateReadmeDone', translated });
+      // 手动翻译：短文本免费优先（省 Token），失败/长文本走 AI，AI 失败免费兜底
+      const res = await this._translator.translateReadme(text, this.getProxyUrl());
+      this._translatedReadme = res.text;
+      this.post({ type: 'translateReadmeDone', translated: res.text, warning: res.warning });
     } catch (err: any) {
       this.post({ type: 'translateReadmeError', message: err.message || String(err) });
     }
