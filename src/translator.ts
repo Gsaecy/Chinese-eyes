@@ -382,7 +382,7 @@ export class Translator {
       '1. 保持基本段落结构和标题层级；代码块、行内代码、命令、链接、图片、HTML 标签原样保留',
       '2. 只翻译自然语言内容，不要翻译代码块、行内代码、命令、URL、品牌名',
       '3. 保留技术术语（API/SDK/CLI/IDE 等）不翻译',
-      '4. 翻译后直接输出 Markdown，不要包在 ```markdown 代码块里，不要寒暄说明',
+      '4. 绝对不要输出任何思考过程、推理内容、解释或寒暄，只输出译文本身；不要包在 ```markdown 代码块里',
       '5. 中文句子原样保留，只翻译英文部分',
       '6. 对涉及收费的句子（含 paid/pricing/subscription/trial/premium/license/billing 等），在该句末尾追加 ⚠️',
     ].join('\n');
@@ -561,7 +561,7 @@ export class Translator {
       console.warn('[chineseEyes] LLM 返回空内容，原始响应:', JSON.stringify(out).slice(0, 500));
       return '';
     }
-    return String(out.content).trim();
+    return stripThinkingOutput(String(out.content));
   }
 
   private async callTranslationAPI(texts: string[]): Promise<string[]> {
@@ -1370,6 +1370,26 @@ export function chineseRatio(text: string): number {
     if (code >= 0x4e00 && code <= 0x9fff) ch++;
   }
   return total === 0 ? 0 : ch / total;
+}
+
+/** 清洗 LLM 输出：去掉思考标签块、常见寒暄前缀、外层代码块壳，只留译文本体 */
+function stripThinkingOutput(text: string): string {
+  let t = String(text || '').trim();
+  if (!t) return '';
+  // 1. 去掉 <thinking>/<thought>/<analysis>/<reasoning> 等思考标签块
+  t = t.replace(/<\s*(thinking|thought|analysis|reasoning)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '').trim();
+  // 2. 整段被 ``` 代码块包裹 → 去壳
+  if (/^```[\w-]*\s*\n[\s\S]*\n```\s*$/.test(t)) {
+    t = t.replace(/^```[\w-]*\s*\n/, '').replace(/\n```\s*$/, '').trim();
+  }
+  // 3. 多轮去掉常见寒暄/引导前缀（部分模型会堆叠多句）
+  const prefixRe = /^(好的|好嘞|当然|没问题|没问题啦|以下是|以下为|翻译如下|译文如下|翻译结果|这是译文|这是翻译|下面开始翻译|下面是译文|下面是翻译|开始翻译|译文内容|翻译内容|Here is|Here's|Sure|Okay|OK)[\s:：，,。.!！]*(?:\n)?/i;
+  for (let i = 0; i < 5; i++) {
+    const before = t;
+    t = t.replace(prefixRe, '').trim();
+    if (t === before) break;
+  }
+  return t;
 }
 
 /** 判断译文是否为「真的翻译了」（原文英文 → 译文含中文） */
