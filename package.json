@@ -2,7 +2,7 @@
   "name": "ext-trans-picker",
   "displayName": "扩展选择助手",
   "description": "Browse VS Code marketplace, auto-translate details to Chinese, AI summary for usage/pricing/guide",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "publisher": "honor-world",
   "license": "GPL-3.0",
   "activationEvents": [
@@ -107,7 +107,7 @@
         {
           "id": "chineseEyes-sidebar",
           "title": "扩展选择助手",
-          "icon": "media/icon.svg"
+          "icon": "media/icon.png"
         }
       ]
     },

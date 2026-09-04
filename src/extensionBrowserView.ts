@@ -1,9 +1,10 @@
 import * as vscode from 'vscode';
 import { Translator, TranslationConfig } from './translator';
-import { queryExtensions } from './marketplaceApi';
+import { queryExtensions, reorderByRelevance } from './marketplaceApi';
 import { ExtensionItem } from './types';
 import { ExtensionDetailPanel } from './extensionDetailPanel';
 import { icon } from './icons';
+import { APPLE_CSS } from './theme';
 
 /**
  * 侧边栏：扩展列表浏览（搜索 + 卡片）
@@ -20,6 +21,7 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
 
   private _query = '';
   private _sortBy: 'relevance' | 'installCount' | 'rating' | 'publishedDate' = 'installCount';
+  private _sortExplicit = false;
   private _page = 1;
   private _hasMore = true;
   private _loading = false;
@@ -107,6 +109,10 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
 
         case 'search':
           this._query = (msg.query || '').trim();
+          // 有关键词且用户未手动选排序时，默认按相关性搜索（避免热门排序把无关大牌排前面）
+          if (this._query && !this._sortExplicit && this._sortBy !== 'relevance') {
+            this._sortBy = 'relevance';
+          }
           await this.doSearch(this._query, true);
           break;
 
@@ -118,6 +124,7 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
 
         case 'setSort':
           this._sortBy = msg.sortBy || 'installCount';
+          this._sortExplicit = true;
           await this.doSearch(this._query, true);
           break;
 
@@ -184,7 +191,9 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
           this._items = [];
           this._page = 1;
           this._hasMore = true;
-          this.postMessage({ type: 'welcome' });
+          this._sortBy = 'installCount';
+          this._sortExplicit = false;
+          this.postMessage({ type: 'welcome', sortBy: 'installCount' });
           break;
 
         case 'openTranslator':
@@ -240,7 +249,7 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
       });
 
       // 异步翻译每个扩展的简介（不阻塞列表展示）
-      const newItems = extensions;
+      const newItems = reset ? reorderByRelevance(extensions, query) : extensions;
       this._items = reset ? newItems : this._items.concat(newItems);
       this._hasMore = this._items.length < total && extensions.length > 0;
 
@@ -251,6 +260,7 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
         query,
         page: this._page,
         total,
+        sortBy: this._sortBy,
       });
 
       this._page += 1;
@@ -283,112 +293,64 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 <style nonce="${N}">
-:root{
-  --fg:var(--vscode-editor-foreground);
-  --bg:var(--vscode-editor-background);
-  --card:var(--vscode-sideBar-background);
-  --border:var(--vscode-widget-border, rgba(128,128,128,.3));
-  --btn:var(--vscode-button-background);
-  --btn-fg:var(--vscode-button-foreground);
-  --btn-hover:var(--vscode-button-hoverBackground);
-  --sub:var(--vscode-descriptionForeground);
-  --link:var(--vscode-textLink-foreground);
-  --input-bg:var(--vscode-input-background);
-  --input-fg:var(--vscode-input-foreground);
-  --input-border:var(--vscode-input-border);
-  --success:#1ea55b;--warning:#c9a93c;--error:#c95c3c;
-}
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:var(--vscode-font-family);font-size:13px;color:var(--fg);background:var(--bg);padding:8px}
-.header{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
-.search-row{display:flex;gap:4px}
-.search-row input{flex:1;padding:6px 8px;border:1px solid var(--input-border);border-radius:4px;background:var(--input-bg);color:var(--input-fg);font-size:12px;outline:none}
-.search-row input:focus{border-color:var(--btn)}
-.search-row button{padding:6px 10px;border:none;border-radius:4px;background:var(--btn);color:var(--btn-fg);cursor:pointer;font-size:12px;display:inline-flex;align-items:center;gap:4px}
-.search-row button:hover{background:var(--btn-hover)}
-.search-row .btn-settings{background:transparent;color:var(--sub);border:1px solid var(--border)}
-.search-row .btn-settings:hover{background:var(--btn);color:var(--btn-fg)}
-.search-row .icon-btn{padding:6px 8px}
-.ico{width:14px;height:14px;flex-shrink:0}
-.bicon{display:inline-flex;align-items:center;gap:4px;justify-content:center}
-.sort-row{display:flex;gap:4px;flex-wrap:wrap;font-size:11px}
-.sort-chip{padding:2px 8px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--sub);cursor:pointer;user-select:none}
-.sort-chip:hover{border-color:var(--btn);color:var(--btn)}
-.sort-chip.active{background:var(--btn);color:var(--btn-fg);border-color:var(--btn)}
-.capability-bar{font-size:10px;color:var(--sub);display:flex;gap:8px;align-items:center;padding:4px 6px;border-radius:4px;background:rgba(128,128,128,.08)}
-.capability-bar .dot{width:6px;height:6px;border-radius:50%;display:inline-block}
-.capability-bar .dot.g{background:var(--success)}
-.capability-bar .dot.y{background:var(--warning)}
-.capability-bar .dot.r{background:var(--error)}
-.list{display:flex;flex-direction:column;gap:6px;margin-top:4px}
-.card{display:flex;gap:8px;padding:8px;background:var(--card);border:1px solid var(--border);border-radius:6px}
-.card .icon{width:42px;height:42px;border-radius:6px;flex-shrink:0;background:rgba(128,128,128,.15);object-fit:contain}
-.card .icon-fallback{width:42px;height:42px;border-radius:6px;flex-shrink:0;background:rgba(128,128,128,.15);display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--sub)}
-.card .body{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
-.card .title{font-weight:600;font-size:13px;line-height:1.3;word-break:break-word}
-.card .publisher{font-size:10px;color:var(--sub)}
-.card .desc{font-size:11px;color:var(--fg);line-height:1.5;word-break:break-word;opacity:.92}
-.card .desc-zh{font-size:11px;color:var(--fg);line-height:1.5;word-break:break-word;border-left:2px solid var(--success);padding-left:6px;margin-top:2px}
-.card .desc-zh.loading{opacity:.5;font-style:italic}
-.card .meta{display:flex;gap:6px;align-items:center;font-size:10px;color:var(--sub);flex-wrap:wrap;margin-top:2px}
-.card .badge{padding:1px 6px;border-radius:8px;font-size:10px;line-height:1.4}
-.card .badge.free{background:rgba(30,165,91,.15);color:var(--success)}
-.card .badge.paid{background:rgba(201,92,60,.15);color:var(--error)}
-.card .badge.maybe{background:rgba(201,169,60,.15);color:var(--warning)}
-.card .actions{display:flex;gap:4px;margin-top:4px;flex-wrap:wrap}
-.card .actions button{flex:1;min-width:60px;padding:4px 6px;font-size:11px;border:1px solid var(--border);background:transparent;color:var(--fg);border-radius:4px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:4px}
-.card .actions button:hover{background:var(--btn);color:var(--btn-fg);border-color:var(--btn)}
-.card .actions .primary{background:var(--btn);color:var(--btn-fg);border-color:var(--btn)}
-.card .actions .primary:hover{background:var(--btn-hover)}
-.card .actions .summary{color:var(--link);border-color:var(--link)}
-.card .actions .summary:hover{background:var(--link);color:var(--btn-fg)}
-.empty{padding:20px;text-align:center;color:var(--sub);font-size:12px}
-.loading-bar{display:flex;align-items:center;justify-content:center;gap:6px;padding:10px;color:var(--sub);font-size:11px}
-.spinner{width:12px;height:12px;border:2px solid var(--sub);border-top-color:var(--btn);border-radius:50%;animation:spin .8s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-.load-more{padding:6px;text-align:center;background:transparent;color:var(--link);border:1px dashed var(--border);border-radius:6px;cursor:pointer;font-size:11px;margin:4px 0}
-.load-more:hover{border-color:var(--link);background:rgba(0,122,204,.08)}
-.settings-area{margin-top:12px;padding:10px;background:var(--card);border:1px solid var(--border);border-radius:6px;display:none;position:sticky;top:0;z-index:10;box-shadow:0 4px 12px rgba(0,0,0,.25)}
+${APPLE_CSS}
+/* ===== 侧边栏布局 ===== */
+body{padding:12px;font-size:13px}
+.header{display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
+.search-row{display:flex;gap:6px;align-items:center}
+.search-row .ap-input{flex:1;min-width:0}
+.capability-bar{display:flex;gap:14px;align-items:center;padding:2px 8px;font-size:10.5px;color:var(--text-weak)}
+.capability-bar .dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:4px;vertical-align:1px}
+.capability-bar .dot.g{background:#34c759}
+.capability-bar .dot.y{background:#ff9500}
+.capability-bar .dot.r{background:#ff3b30}
+.list{display:flex;flex-direction:column;gap:10px;margin-top:6px}
+.ext-card{display:flex;gap:12px;padding:12px}
+.ext-card .icon{width:44px;height:44px;border-radius:10px;flex-shrink:0;background:var(--chip-bg);object-fit:contain}
+.ext-card .icon-fallback{width:44px;height:44px;border-radius:10px;flex-shrink:0;background:var(--chip-bg);display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--text-sub);font-size:18px}
+.ext-card .body{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}
+.ext-card .title{font-weight:700;font-size:13px;line-height:1.3;word-break:break-word;letter-spacing:-.01em}
+.ext-card .publisher{font-size:10.5px;color:var(--text-sub)}
+.ext-card .desc{font-size:11.5px;color:var(--text-sub);line-height:1.5;word-break:break-word}
+.ext-card .desc-zh{font-size:11.5px;color:var(--text);line-height:1.5;word-break:break-word;border-left:2px solid var(--accent);padding-left:8px;margin-top:2px}
+.ext-card .desc-zh.loading{opacity:.5;font-style:italic}
+.ext-card .meta{display:flex;gap:8px;align-items:center;font-size:10.5px;color:var(--text-weak);flex-wrap:wrap;margin-top:2px}
+.ext-card .meta .bicon{display:inline-flex;align-items:center;gap:3px}
+.ext-card .actions{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+.ext-card .actions .ap-btn{flex:1;min-width:62px}
+.empty{padding:40px 20px;text-align:center;color:var(--text-weak);font-size:12px}
+.loading-bar{display:flex;align-items:center;justify-content:center;gap:8px;padding:16px;color:var(--text-weak);font-size:11.5px}
+.load-more{display:block;width:100%;margin:4px 0;padding:8px;text-align:center;background:transparent;color:var(--accent);border:none;border-radius:var(--radius-pill);cursor:pointer;font-size:12px;font-weight:600;font-family:inherit}
+.load-more:hover{background:var(--accent-soft)}
+.load-more:disabled{opacity:.5;cursor:not-allowed}
+.settings-area{margin-top:4px;padding:14px;display:none;position:sticky;top:0;z-index:10}
 .settings-area.show{display:block}
-.settings-area h3{font-size:12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;color:var(--sub)}
-.settings-area h3 .close{cursor:pointer;color:var(--link);font-weight:400;font-size:11px}
-.field{display:flex;flex-direction:column;gap:3px;margin-bottom:8px}
-.field label{font-size:11px;color:var(--sub)}
-.field select,.field input{padding:5px 7px;border:1px solid var(--input-border);background:var(--input-bg);color:var(--input-fg);border-radius:4px;font-size:11px;outline:none}
-.field select:focus,.field input:focus{border-color:var(--btn)}
-.field .hint{font-size:10px;color:var(--sub);opacity:.8}
-.settings-actions{display:flex;gap:6px;margin-top:6px}
-.settings-actions button{padding:5px 10px;border:none;border-radius:4px;cursor:pointer;font-size:11px}
-.settings-actions .save{background:var(--btn);color:var(--btn-fg)}
-.settings-actions .save:hover{background:var(--btn-hover)}
-.settings-actions .open-ui{background:transparent;color:var(--sub);border:1px solid var(--border)}
-.settings-actions .open-ui:hover{background:var(--btn);color:var(--btn-fg)}
-.help-box{margin-top:8px;padding:8px;background:rgba(30,165,91,.08);border:1px solid var(--success);border-radius:4px;font-size:10px;line-height:1.7;color:var(--fg)}
-.help-box strong{color:var(--success)}
-.help-box a{color:var(--link);cursor:pointer;text-decoration:underline}
-.toast{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);padding:5px 14px;border-radius:14px;font-size:11px;z-index:99;display:none}
-.toast.success{background:var(--success);color:#fff}
-.toast.error{background:var(--error);color:#fff}
-.toast.info{background:var(--btn);color:var(--btn-fg)}
-.welcome-area{display:flex;align-items:center;justify-content:center;height:300px;text-align:center}
-.welcome-content h2{font-size:18px;margin-bottom:10px;color:var(--fg);display:flex;align-items:center;justify-content:center;gap:6px}
-.welcome-content p{font-size:13px;color:var(--sub);margin-bottom:20px}
-.primary-btn{padding:10px 24px;background:var(--btn);color:var(--btn-fg);border:none;border-radius:6px;cursor:pointer;font-size:14px;font-weight:600;display:inline-flex;align-items:center;gap:6px}
-.primary-btn:hover{background:var(--btn-hover)}
-.primary-btn:disabled{opacity:.6;cursor:not-allowed}
+.settings-area h3{font-size:13px;font-weight:700;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;color:var(--text)}
+.settings-area h3 .close{cursor:pointer;color:var(--accent);font-weight:500;font-size:11.5px}
+.settings-actions{display:flex;gap:8px;margin-top:14px}
+.toast{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);padding:7px 18px;border-radius:var(--radius-pill);font-size:11.5px;z-index:99;display:none;box-shadow:var(--shadow-pop);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.toast.success{background:rgba(52,199,89,.92);color:#fff}
+.toast.error{background:rgba(255,59,48,.92);color:#fff}
+.toast.info{background:rgba(0,122,255,.92);color:#fff}
+.welcome-area{display:flex;align-items:center;justify-content:center;height:320px;text-align:center}
+.welcome-content .mark{width:56px;height:56px;border-radius:14px;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;margin:0 auto 14px}
+.welcome-content h2{font-size:16px;font-weight:700;margin-bottom:8px;color:var(--text);letter-spacing:-.01em}
+.welcome-content p{font-size:12.5px;color:var(--text-sub);margin-bottom:18px;line-height:1.6}
+.help-box{margin-top:12px;padding:12px;background:rgba(52,199,89,.08);border:1px solid rgba(52,199,89,.35);border-radius:var(--radius-m);font-size:11px;line-height:1.8;color:var(--text)}
+.help-box strong{color:#34c759;display:inline-flex;align-items:center;gap:4px}
 </style>
 </head>
 <body>
 <div class="header">
   <div class="search-row">
-    <input id="searchInput" type="text" placeholder="搜索扩展名 / 关键词...">
-    <button id="clearSearchBtn" class="btn-settings icon-btn" title="清除搜索" style="display:none">${icon('clear')}</button>
-    <button id="searchBtn">${icon('search')}<span>搜索</span></button>
-    <button id="translatorBtn" class="btn-settings icon-btn" title="打开翻译面板">${icon('globe')}</button>
-    <button id="settingsBtn" class="btn-settings icon-btn" title="设置">${icon('settings')}</button>
-    <button id="closePanelBtn" class="btn-settings icon-btn" title="关闭侧边栏">${icon('close')}</button>
+    <input id="searchInput" class="ap-input" type="text" placeholder="搜索扩展名 / 关键词...">
+    <button id="clearSearchBtn" class="ap-btn ap-btn-icon" title="清除搜索" style="display:none">${icon('clear')}</button>
+    <button id="searchBtn" class="ap-btn ap-btn-primary">${icon('search')}<span>搜索</span></button>
+    <button id="translatorBtn" class="ap-btn ap-btn-icon" title="打开翻译面板">${icon('globe')}</button>
+    <button id="settingsBtn" class="ap-btn ap-btn-icon" title="设置">${icon('settings')}</button>
+    <button id="closePanelBtn" class="ap-btn ap-btn-icon" title="关闭侧边栏">${icon('close')}</button>
   </div>
-  <div class="sort-row">
+  <div class="ap-seg" id="sortSeg">
     <span class="sort-chip" data-sort="installCount">热门</span>
     <span class="sort-chip" data-sort="rating">评分</span>
     <span class="sort-chip" data-sort="publishedDate">最新</span>
@@ -400,11 +362,23 @@ body{font-family:var(--vscode-font-family);font-size:13px;color:var(--fg);backgr
   </div>
 </div>
 
-<div class="settings-area" id="settingsArea">
+<div class="settings-area ap-pop" id="settingsArea">
   <h3>设置 <span class="close" id="closeSettings">收起</span></h3>
-  <div class="field">
+  <div class="ap-field">
+    <label>Agent 预设（选一个，自动填好地址和模型，你只需填 API Key）</label>
+    <select id="presetSelect" class="ap-select">
+      <option value="custom">自定义（手动填下方地址和模型）</option>
+      <option value="deepseek">DeepSeek 官方</option>
+      <option value="openai">OpenAI 官方</option>
+      <option value="dashscope">阿里云百炼 DashScope（qwen）</option>
+      <option value="moonshot">月之暗面 Kimi</option>
+      <option value="glm">智谱 GLM</option>
+      <option value="siliconflow">硅基流动 SiliconFlow</option>
+    </select>
+  </div>
+  <div class="ap-field">
     <label>翻译 / 总结 提供商</label>
-    <select id="providerSelect">
+    <select id="providerSelect" class="ap-select">
       <option value="local">本地词典（离线，无 AI 总结）</option>
       <option value="deepseek">DeepSeek（推荐，翻译 + AI 总结）</option>
       <option value="openai-compatible">OpenAI 兼容（翻译 + AI 总结）</option>
@@ -413,40 +387,41 @@ body{font-family:var(--vscode-font-family);font-size:13px;color:var(--fg);backgr
       <option value="libretranslate">LibreTranslate（仅翻译）</option>
     </select>
   </div>
-  <div class="field">
+  <div class="ap-field">
     <label>API Key</label>
-    <input type="password" id="apiKeyInput" placeholder="输入你的 API Key...">
+    <input type="password" id="apiKeyInput" class="ap-input" placeholder="输入你的 API Key...">
     <div class="hint">本地词典不需要 Key；其余 provider 必须填写</div>
   </div>
-  <div class="field">
-    <label>自定义 Endpoint（可选）</label>
-    <input type="text" id="endpointInput" placeholder="如 https://api.deepseek.com 或 https://api.openai.com">
+  <div class="ap-field">
+    <label>API 地址（选预设后自动填充，可改）</label>
+    <input type="text" id="endpointInput" class="ap-input" placeholder="如 https://api.deepseek.com 或 https://api.openai.com">
   </div>
-  <div class="field">
-    <label>自定义模型（可选）</label>
-    <input type="text" id="modelInput" placeholder="如 deepseek-chat、gpt-4o-mini、qwen-plus">
+  <div class="ap-field">
+    <label>模型名称（选预设后自动填充，可改）</label>
+    <input type="text" id="modelInput" class="ap-input" placeholder="如 deepseek-chat、gpt-4o-mini、qwen-plus">
   </div>
   <div class="settings-actions">
-    <button class="save" id="saveSettingsBtn">保存</button>
-    <button class="open-ui" id="openSettingsBtn">在 VS Code 设置中打开</button>
+    <button class="ap-btn ap-btn-primary" id="saveSettingsBtn">保存</button>
+    <button class="ap-btn ap-btn-ghost" id="openSettingsBtn">在 VS Code 设置中打开</button>
   </div>
   <div class="help-box">
     <strong>${icon('key', 12)} 推荐配置</strong><br>
-    1. DeepSeek：注册 <a data-url="https://platform.deepseek.com/">platform.deepseek.com</a> → 创建 API Key<br>
-    2. OpenAI 兼容：填入 endpoint（如阿里云 DashScope、Moonshot、Together 等）+ 对应模型名<br>
-    3. 仅翻译：DeepL/Google/LibreTranslate 也可使用，但不能 AI 总结
+    1. 在「Agent 预设」选一个（如 DeepSeek / 阿里云 / Kimi）→ 地址和模型自动填好<br>
+    2. 只填 API Key → 点保存，即可翻译 + AI 总结<br>
+    3. 不填 Key 也能用：免费在线翻译（有道/Google）自动生效
   </div>
 </div>
 
 <div id="listArea">
   <div class="welcome-area" id="welcomeArea">
     <div class="welcome-content">
-      <h2>${icon('globe', 20)}<span>欢迎使用扩展选择助手</span></h2>
+      <div class="mark">${icon('globe', 26)}</div>
+      <h2>欢迎使用扩展选择助手</h2>
       <p>AI 智能总结 + 翻译，帮助你快速了解 VS Code 扩展</p>
-      <button id="loadExtensionsBtn" class="primary-btn">${icon('grid')}<span class="lbl">浏览扩展</span></button>
-      <div style="margin-top:16px;font-size:12px;color:var(--sub)">
-        <strong style="color:var(--warning);display:inline-flex;align-items:center;gap:4px">${icon('warning', 12)} 首次使用请先配置 API Key</strong><br>
-        点击右上角 ${icon('settings', 12)} 设置 → 选择 DeepSeek/OpenAI 兼容 → 填入 Key
+      <button id="loadExtensionsBtn" class="ap-btn ap-btn-primary">${icon('grid')}<span class="lbl">浏览扩展</span></button>
+      <div style="margin-top:16px;font-size:12px;color:var(--text-sub)">
+        <strong style="color:#ff9500;display:inline-flex;align-items:center;gap:4px">${icon('warning', 12)} 首次使用请先配置 API Key</strong><br>
+        点击右上角 ${icon('settings', 12)} 设置 → 选择预设 → 填入 Key
       </div>
     </div>
   </div>
@@ -464,6 +439,7 @@ const settingsBtn = el('settingsBtn');
 const settingsArea = el('settingsArea');
 const closeSettings = el('closeSettings');
 const providerSelect = el('providerSelect');
+const presetSelect = el('presetSelect');
 const apiKeyInput = el('apiKeyInput');
 const endpointInput = el('endpointInput');
 const modelInput = el('modelInput');
@@ -477,7 +453,7 @@ const sumStat = el('sumStat');
 const sortChips = document.querySelectorAll('.sort-chip');
 
 // 与扩展侧 icons.ts 一致的简洁线性 SVG 图标
-const ICON_GLOBE = '<svg class="ico" viewBox="0 0 16 16" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.25"/><path d="M1.75 8h12.5"/><path d="M8 1.75a9.6 9.6 0 0 1 0 12.5"/></svg>';
+const ICON_GLOBE = '<svg class="ico" viewBox="0 0 16 16" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.25"/><path d="M1.75 8h12.5"/><path d="M8 1.75a9.6 9.6 0 0 1 0 12.5"/></svg>';
 const ICON_GRID = '<svg class="ico" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="5.25" height="5.25" rx="1"/><rect x="8.75" y="2" width="5.25" height="5.25" rx="1"/><rect x="2" y="8.75" width="5.25" height="5.25" rx="1"/><rect x="8.75" y="8.75" width="5.25" height="5.25" rx="1"/></svg>';
 const ICON_SETTINGS = '<svg class="ico" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11"/><circle cx="6.25" cy="4" r="1.6"/><path d="M2.5 8h11"/><circle cx="10" cy="8" r="1.6"/><path d="M2.5 12h11"/><circle cx="6.75" cy="12" r="1.6"/></svg>';
 const ICON_WARNING = '<svg class="ico" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.25 14.5 13.5h-13z"/><path d="M8 6.5v3.25"/><path d="M8 11.75h.01"/></svg>';
@@ -485,12 +461,13 @@ const ICON_WARNING = '<svg class="ico" viewBox="0 0 16 16" width="12" height="12
 function welcomeHtml(){
   return '<div class="welcome-area">'
     + '<div class="welcome-content">'
-    + '<h2>' + ICON_GLOBE + '<span>欢迎使用扩展选择助手</span></h2>'
+    + '<div class="mark">' + ICON_GLOBE + '</div>'
+    + '<h2>欢迎使用扩展选择助手</h2>'
     + '<p>AI 智能总结 + 翻译，帮助你快速了解 VS Code 扩展</p>'
-    + '<button id="loadExtensionsBtn" class="primary-btn">' + ICON_GRID + '<span class="lbl">浏览扩展</span></button>'
-    + '<div style="margin-top:16px;font-size:12px;color:var(--sub)">'
-    + '<strong style="color:var(--warning);display:inline-flex;align-items:center;gap:4px">' + ICON_WARNING + ' 首次使用请先配置 API Key</strong><br>'
-    + '点击右上角 ' + ICON_SETTINGS + ' 设置 → 选择 DeepSeek/OpenAI 兼容 → 填入 Key'
+    + '<button id="loadExtensionsBtn" class="ap-btn ap-btn-primary">' + ICON_GRID + '<span class="lbl">浏览扩展</span></button>'
+    + '<div style="margin-top:16px;font-size:12px;color:var(--text-sub)">'
+    + '<strong style="color:#ff9500;display:inline-flex;align-items:center;gap:4px">' + ICON_WARNING + ' 首次使用请先配置 API Key</strong><br>'
+    + '点击右上角 ' + ICON_SETTINGS + ' 设置 → 选择预设 → 填入 Key'
     + '</div></div></div>';
 }
 
@@ -565,15 +542,15 @@ function renderList(){
   const parts = [];
   for (const item of state.items){
     const badge = item.pricingStatus === 'paid'
-      ? '<span class="badge paid">付费</span>'
+      ? '<span class="ap-badge red">付费</span>'
       : item.pricingStatus === 'maybePaid'
-        ? '<span class="badge maybe">可能付费</span>'
-        : '<span class="badge free">免费</span>';
+        ? '<span class="ap-badge orange">可能付费</span>'
+        : '<span class="ap-badge green">免费</span>';
     const iconHtml = item.iconUrl
       ? '<img class="icon" src="' + esc(item.iconUrl) + '" alt="' + esc((item.displayName || '?').slice(0,1)) + '">'
       : '<div class="icon-fallback">' + esc((item.displayName || '?').slice(0,1).toUpperCase()) + '</div>';
     parts.push(
-      '<div class="card" data-id="' + esc(item.id) + '">'
+      '<div class="ap-card hoverable ext-card" data-id="' + esc(item.id) + '">'
       + iconHtml
       + '<div class="body">'
         + '<div class="title">' + esc(item.displayName) + '</div>'
@@ -585,10 +562,10 @@ function renderList(){
           + (item.ratingScore ? '<span class="bicon">${icon('star', 11)}' + item.ratingScore.toFixed(1) + '（' + fmtCount(item.ratingCount) + '）</span>' : '')
         + '</div>'
         + '<div class="actions">'
-          + '<button class="primary" data-act="detail">${icon('doc', 12)}<span>详情</span></button>'
-          + '<button class="summary" data-act="summary">${icon('sparkle', 12)}<span>AI 总结</span></button>'
-          + '<button data-act="install" title="在 VS Code 中安装">${icon('install', 12)}<span>安装</span></button>'
-          + '<button data-act="open" title="在编辑器打开扩展页">${icon('external', 12)}</button>'
+          + '<button class="ap-btn ap-btn-sm ap-btn-primary" data-act="detail">${icon('doc', 12)}<span>详情</span></button>'
+          + '<button class="ap-btn ap-btn-sm" data-act="summary">${icon('sparkle', 12)}<span>AI 总结</span></button>'
+          + '<button class="ap-btn ap-btn-sm" data-act="install" title="在 VS Code 中安装">${icon('install', 12)}<span>安装</span></button>'
+          + '<button class="ap-btn ap-btn-sm ap-btn-icon" data-act="open" title="在编辑器打开扩展页">${icon('external', 12)}</button>'
         + '</div>'
       + '</div>'
       + '</div>'
@@ -623,7 +600,7 @@ function renderList(){
 
 function showLoading(append){
   if (!append){
-    listArea.innerHTML = '<div class="loading-bar"><span class="spinner"></span>加载中…</div>';
+    listArea.innerHTML = '<div class="loading-bar"><span class="ap-spinner"></span>加载中…</div>';
   }
 }
 
@@ -654,6 +631,37 @@ sortChips.forEach((chip) => {
     vscode.postMessage({type:'setSort', sortBy: state.sortBy});
   });
 });
+
+/* ---- Agent 预设：选择后自动填充 provider / endpoint / model ---- */
+const PRESETS = {
+  deepseek: { provider: 'deepseek', endpoint: 'https://api.deepseek.com', model: 'deepseek-chat' },
+  openai: { provider: 'openai-compatible', endpoint: 'https://api.openai.com', model: 'gpt-4o-mini' },
+  dashscope: { provider: 'openai-compatible', endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
+  moonshot: { provider: 'openai-compatible', endpoint: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
+  glm: { provider: 'openai-compatible', endpoint: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-plus' },
+  siliconflow: { provider: 'openai-compatible', endpoint: 'https://api.siliconflow.cn/v1', model: 'deepseek-ai/DeepSeek-V3' },
+};
+
+function detectPreset(provider, endpoint, model){
+  for (const key of Object.keys(PRESETS)) {
+    const p = PRESETS[key];
+    if (p.provider === provider && p.endpoint === (endpoint || '').replace(/\/+$/, '') && p.model === model) {
+      return key;
+    }
+  }
+  return 'custom';
+}
+
+if (presetSelect) {
+  presetSelect.addEventListener('change', () => {
+    const p = PRESETS[presetSelect.value];
+    if (p) {
+      providerSelect.value = p.provider;
+      endpointInput.value = p.endpoint;
+      modelInput.value = p.model;
+    }
+  });
+}
 
 settingsBtn.addEventListener('click', () => {
   settingsArea.classList.toggle('show');
@@ -733,6 +741,8 @@ window.addEventListener('message', (event) => {
       state.items = [];
       state.hasMore = false;
       state.descMap = {};
+      if (msg.sortBy) state.sortBy = msg.sortBy;
+      sortChips.forEach((c) => c.classList.toggle('active', c.getAttribute('data-sort') === state.sortBy));
       renderWelcome();
       break;
     case 'loading':
@@ -744,6 +754,8 @@ window.addEventListener('message', (event) => {
       state.items = msg.items || [];
       state.hasMore = !!msg.hasMore;
       state.descMap = {};
+      if (msg.sortBy) state.sortBy = msg.sortBy;
+      sortChips.forEach((c) => c.classList.toggle('active', c.getAttribute('data-sort') === state.sortBy));
       renderList();
       break;
     case 'descriptionsTranslated':
@@ -756,6 +768,7 @@ window.addEventListener('message', (event) => {
       apiKeyInput.value = msg.apiKey || '';
       endpointInput.value = msg.endpoint || '';
       modelInput.value = msg.model || '';
+      presetSelect.value = detectPreset(msg.provider, msg.endpoint, msg.model);
       break;
     case 'settingsSaved':
       saveSettingsBtn.disabled = false;

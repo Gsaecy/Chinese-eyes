@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { Translator } from './translator';
 import { icon } from './icons';
+import { APPLE_CSS } from './theme';
 
 /**
  * 独立翻译面板（在主编辑区 webview panel）
@@ -157,89 +158,66 @@ export class TranslatorPanel {
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 <style nonce="${N}">
-:root{
-  --fg:var(--vscode-editor-foreground);
-  --bg:var(--vscode-editor-background);
-  --card:var(--vscode-sideBar-background);
-  --border:var(--vscode-widget-border, rgba(128,128,128,.3));
-  --btn:var(--vscode-button-background);
-  --btn-fg:var(--vscode-button-foreground);
-  --btn-hover:var(--vscode-button-hoverBackground);
-  --sub:var(--vscode-descriptionForeground);
-  --link:var(--vscode-textLink-foreground);
-  --input-bg:var(--vscode-input-background);
-  --input-fg:var(--vscode-input-foreground);
-  --input-border:var(--vscode-input-border);
-  --success:#1ea55b;--warning:#c9a93c;--error:#c95c3c;
-}
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:var(--vscode-font-family);color:var(--fg);background:var(--bg);font-size:14px;line-height:1.6}
-.container{max-width:920px;margin:0 auto;padding:20px}
-h1{font-size:20px;margin-bottom:12px;display:flex;align-items:center;gap:8px}
-h1 .settings{font-size:12px;margin-left:auto;cursor:pointer;color:var(--link);text-decoration:underline;opacity:.8}
-h1 .settings:hover{opacity:1}
+${APPLE_CSS}
+/* ===== 翻译面板布局 ===== */
+body{font-size:14px;line-height:1.6}
+.container{max-width:960px;margin:0 auto;padding:28px 24px}
+.page-head{display:flex;align-items:center;gap:10px;margin-bottom:18px}
+.page-head .title{font-size:20px;font-weight:700;letter-spacing:-.02em}
+.page-head .settings{margin-left:auto;font-size:12px;cursor:pointer;color:var(--accent);display:inline-flex;align-items:center;gap:5px;background:transparent;border:none;font-family:inherit}
+.page-head .settings:hover{opacity:.8}
 .panels{display:flex;gap:16px;margin-bottom:16px}
-.panel{flex:1;display:flex;flex-direction:column}
-.panel-label{font-size:12px;font-weight:600;margin-bottom:6px;color:var(--sub)}
-.panel textarea{flex:1;min-height:280px;padding:10px;border:1px solid var(--input-border);border-radius:6px;background:var(--input-bg);color:var(--input-fg);font-size:13px;line-height:1.6;resize:vertical;outline:none;font-family:var(--vscode-font-family)}
-.panel textarea:focus{border-color:var(--btn)}
-.panel .output-area{flex:1;min-height:280px;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--fg);font-size:13px;line-height:1.6;overflow-y:auto;white-space:pre-wrap;word-break:break-word}
-.panel .output-area .source-note{display:block;margin-top:8px;font-size:11px;color:var(--sub)}
-.output-area .empty{color:var(--sub);font-style:italic}
-.actions{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
-.actions button{padding:7px 14px;border:1px solid var(--border);border-radius:4px;background:transparent;color:var(--fg);cursor:pointer;font-size:13px;display:inline-flex;align-items:center;gap:6px}
-.actions button:hover{background:var(--btn);color:var(--btn-fg);border-color:var(--btn)}
-.actions .primary{background:var(--btn);color:var(--btn-fg);border-color:var(--btn);font-weight:600}
-.actions .primary:hover{background:var(--btn-hover)}
-.actions button:disabled{opacity:.5;cursor:not-allowed}
-.ico{width:14px;height:14px;flex-shrink:0}
-.warn-note{margin-top:8px;padding:8px 12px;background:rgba(201,169,60,.12);border:1px solid var(--warning);border-radius:4px;color:var(--fg);font-size:12px;line-height:1.6;display:flex;gap:6px;align-items:flex-start}
-.warn-note .ico{margin-top:2px}
-.summary-section{margin-top:16px}
-.summary-section h2{font-size:15px;margin-bottom:8px;display:flex;align-items:center;gap:6px}
-.summary-body{padding:12px;background:var(--card);border:1px solid var(--border);border-radius:6px;min-height:60px;font-size:13px;line-height:1.7;white-space:pre-wrap;word-break:break-word}
-.summary-body:empty::after{content:'点击「AI 总结」按钮生成总结';color:var(--sub);font-style:italic}
-.loading-state{display:flex;align-items:center;justify-content:center;gap:8px;padding:14px;color:var(--sub)}
-.spinner{width:14px;height:14px;border:2px solid var(--sub);border-top-color:var(--btn);border-radius:50%;animation:spin .8s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-.error-state{padding:8px 12px;background:rgba(201,92,60,.1);border:1px solid var(--error);border-radius:4px;color:var(--error);font-size:12px;margin-top:6px}
-.toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);padding:6px 16px;border-radius:16px;font-size:12px;z-index:99;display:none}
-.toast.success{background:var(--success);color:#fff}
-.toast.error{background:var(--error);color:#fff}
-.toast.info{background:var(--btn);color:var(--btn-fg)}
+.panel{flex:1;display:flex;flex-direction:column;padding:16px}
+.panel-label{font-size:12px;font-weight:600;margin-bottom:10px;color:var(--text-sub);display:flex;align-items:center;gap:6px}
+.panel textarea{flex:1;min-height:280px;padding:14px;border:1px solid var(--line);border-radius:var(--radius-m);background:var(--input);color:var(--text);font-size:13px;line-height:1.65;resize:vertical;outline:none;font-family:var(--vscode-editor-font-family,monospace)}
+.panel textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.panel .output-area{flex:1;min-height:280px;padding:14px;border:1px solid var(--line);border-radius:var(--radius-m);background:var(--card);color:var(--text);font-size:13px;line-height:1.65;overflow-y:auto;white-space:pre-wrap;word-break:break-word}
+.panel .output-area .source-note{display:block;margin-top:8px;font-size:11px;color:var(--text-weak)}
+.output-area .empty{color:var(--text-weak);font-style:italic}
+.actions{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+.summary-section{margin-top:18px}
+.summary-section h2{font-size:15px;font-weight:700;margin-bottom:10px;display:flex;align-items:center;gap:7px}
+.summary-body{padding:16px;min-height:60px;font-size:13px;line-height:1.75;white-space:pre-wrap;word-break:break-word}
+.summary-body:empty::after{content:'点击「AI 总结」按钮生成总结';color:var(--text-weak);font-style:italic}
+.loading-state{display:flex;align-items:center;justify-content:center;gap:8px;padding:16px;color:var(--text-weak)}
+.error-state{padding:10px 14px;background:rgba(255,59,48,.1);border:1px solid rgba(255,59,48,.35);border-radius:var(--radius-m);color:#ff453a;font-size:12px;margin-top:8px}
+.toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);padding:7px 18px;border-radius:var(--radius-pill);font-size:12px;z-index:99;display:none;box-shadow:var(--shadow-pop);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.toast.success{background:rgba(52,199,89,.92);color:#fff}
+.toast.error{background:rgba(255,59,48,.92);color:#fff}
+.toast.info{background:rgba(0,122,255,.92);color:#fff}
 @media(max-width:600px){.panels{flex-direction:column}}
 </style>
 </head>
 <body>
 <div class="container">
-  <h1>
-    ${icon('globe', 18)}<span>翻译助手</span>
-    <span class="settings" id="openSettingsBtn">${icon('settings', 13)} 设置</span>
-  </h1>
+  <div class="page-head">
+    ${icon('globe', 22)}<span class="title">翻译助手</span>
+    <button class="settings" id="openSettingsBtn">${icon('settings', 13)} 设置</button>
+  </div>
 
   <div class="actions">
-    <button class="primary" id="translateBtn">${icon('swap')} 翻译</button>
-    <button id="summarizeBtn">${icon('sparkle')} AI 总结</button>
-    <button id="clearBtn">${icon('trash')} 清空</button>
+    <button class="ap-btn ap-btn-primary" id="translateBtn">${icon('swap')} 翻译</button>
+    <button class="ap-btn" id="summarizeBtn">${icon('sparkle')} AI 总结</button>
+    <button class="ap-btn" id="clearBtn">${icon('trash')} 清空</button>
   </div>
 
   <div class="panels">
-    <div class="panel">
+    <div class="panel ap-card">
       <div class="panel-label">${icon('clipboard', 13)} 输入（英文/其他语言）</div>
       <textarea id="inputArea" placeholder="在此粘贴要翻译的英文内容..."></textarea>
     </div>
-    <div class="panel">
+    <div class="panel ap-card">
       <div class="panel-label">${icon('upload', 13)} 输出（中文翻译）</div>
       <div class="output-area" id="outputArea">
         <span class="empty">翻译结果将显示在这里</span>
       </div>
-      <div class="warn-note" id="warnNote" style="display:none"></div>
+      <div class="ap-note" id="warnNote" style="display:none"></div>
     </div>
   </div>
 
   <div class="summary-section">
     <h2>${icon('sparkle')} AI 总结</h2>
-    <div class="summary-body" id="summaryBody"></div>
+    <div class="summary-body ap-card" id="summaryBody"></div>
   </div>
 
   <div class="toast" id="toast"></div>
@@ -303,7 +281,7 @@ function doTranslate(){
   if (!text) { showToast('请先在输入框中粘贴英文内容', 'error'); return; }
   translateBtn.disabled = true;
   translateBtn.innerHTML = ICON_SWAP + ' 翻译中…';
-  outputArea.innerHTML = '<div class="loading-state"><span class="spinner"></span>翻译中…</div>';
+  outputArea.innerHTML = '<div class="loading-state"><span class="ap-spinner"></span>翻译中…</div>';
   vscode.postMessage({type:'translate', text});
 }
 
@@ -312,7 +290,7 @@ function doSummarize(){
   if (!text) { showToast('请先在输入框中粘贴需要总结的内容', 'error'); return; }
   summarizeBtn.disabled = true;
   summarizeBtn.innerHTML = ICON_SPARKLE + ' 生成中…';
-  summaryBody.innerHTML = '<div class="loading-state"><span class="spinner"></span>AI 总结生成中…</div>';
+  summaryBody.innerHTML = '<div class="loading-state"><span class="ap-spinner"></span>AI 总结生成中…</div>';
   vscode.postMessage({type:'summarize', text});
 }
 
@@ -320,7 +298,7 @@ window.addEventListener('message', (event) => {
   const msg = event.data;
   switch (msg.type){
     case 'translating':
-      outputArea.innerHTML = '<div class="loading-state"><span class="spinner"></span>翻译中…</div>';
+      outputArea.innerHTML = '<div class="loading-state"><span class="ap-spinner"></span>翻译中…</div>';
       warnNote.style.display = 'none';
       break;
     case 'translateDone':
@@ -341,7 +319,7 @@ window.addEventListener('message', (event) => {
       outputArea.innerHTML = '<div class="error-state">' + esc(msg.message) + '</div>';
       break;
     case 'summarizing':
-      summaryBody.innerHTML = '<div class="loading-state"><span class="spinner"></span>AI 总结生成中…</div>';
+      summaryBody.innerHTML = '<div class="loading-state"><span class="ap-spinner"></span>AI 总结生成中…</div>';
       break;
     case 'summarizeDone':
       summarizeBtn.disabled = false;

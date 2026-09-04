@@ -148,6 +148,32 @@ export async function getExtensionDetail(publisher: string, name: string): Promi
   return extensions[0] ?? null;
 }
 
+/** 按关键词匹配度重排搜索结果（标题/ID 命中优先，其次描述、标签） */
+export function reorderByRelevance(items: ExtensionItem[], query: string): ExtensionItem[] {
+  const words = query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w.length > 1);
+  if (!words.length || items.length < 2) return items;
+
+  const score = (item: ExtensionItem): number => {
+    const name = (item.displayName || '').toLowerCase();
+    const extName = (item.extensionName || '').toLowerCase();
+    const id = item.id.toLowerCase();
+    const desc = (item.description || '').toLowerCase();
+    const tags = (item.tags || []).join(' ').toLowerCase();
+    let s = 0;
+    for (const w of words) {
+      if (extName === w || id === w) s += 10;
+      else if (name.includes(w) || id.includes(w)) s += 5;
+      if (desc.includes(w)) s += 2;
+      if (tags.includes(w)) s += 1;
+    }
+    return s;
+  };
+  return [...items].sort((a, b) => score(b) - score(a));
+}
+
 /** 将原始 API 数据转换为我们定义的模型 */
 function rawToExtensionItem(raw: RawGalleryExtension): ExtensionItem {
   const latestVersion = raw.versions?.[0];
@@ -210,6 +236,7 @@ function rawToExtensionItem(raw: RawGalleryExtension): ExtensionItem {
     pricingStatus,
     pricingInfo,
     readmeUrl: readmeFile?.source,
+    detailUrl: detailFile?.source,
     repositoryUrl: latestVersion?.properties?.find(
       (p) => p.key === 'Microsoft.VisualStudio.Services.Links.Source'
     )?.value,
@@ -237,36 +264,16 @@ function getSortByValue(sortBy?: string): number {
 /** 按扩展 ID 精确查询以获取完整文件列表（含 README） */
 async function getExtensionFilesById(publisher: string, name: string): Promise<{readmeUrl?: string; detailUrl?: string} | null> {
   try {
-    // POST 请求，按扩展 ID 精确过滤
-    const requestBody = JSON.stringify({
-      filters: [{
-        criteria: [
-          { filterType: 8, value: 'Microsoft.VisualStudio.Code' },
-          { filterType: 4, value: `${publisher}.${name}` },
-        ],
-        pageNumber: 1,
-        pageSize: 1,
-        sortBy: 0,
-        sortOrder: 0,
-      }],
-      flags: 0x1 | 0x2 | 0x4 | 0x8 | 0x80 | 0x100,
+    // 精确 ID 搜索（SearchText + 本地过滤，见 queryExtensions）
+    const { extensions } = await queryExtensions({
+      text: `${publisher}.${name}`,
+      pageSize: 1,
     });
-
-    const data = await httpsPost(MARKETPLACE_API_URL, requestBody);
-    const result = JSON.parse(data);
-    const rawExtensions: RawGalleryExtension[] = result.results?.[0]?.extensions ?? [];
-    if (rawExtensions.length === 0) return null;
-
-    const files = rawExtensions[0].versions?.[0]?.files ?? [];
-    const readmeFile = files.find(
-      (f: any) => f.assetType === 'Microsoft.VisualStudio.Services.Content.Readme'
-    );
-    const detailFile = files.find(
-      (f: any) => f.assetType === 'Microsoft.VisualStudio.Services.Content.Details'
-    );
+    const item = extensions[0];
+    if (!item) return null;
     return {
-      readmeUrl: readmeFile?.source,
-      detailUrl: detailFile?.source,
+      readmeUrl: item.readmeUrl,
+      detailUrl: item.detailUrl,
     };
   } catch (e) {
     console.warn(`[getExtensionFilesById] 失败: ${publisher}.${name}`, e);
@@ -274,20 +281,61 @@ async function getExtensionFilesById(publisher: string, name: string): Promise<{
   }
 }
 
-/** 先按 ID精确查询扩展，再获取 README（HTML 格式）
+/**
+ * CDN 域名降级：中国大陆走 gallerycdn.azure.cn，海外走 gallerycdn.vsassets.io。
+ * 返回原 URL 与换域后的候选列表（去重）。
+ */
+function cdnUrlVariants(url: string): string[] {
+  const variants: string[] = [url];
+  try {
+    const u = new URL(url);
+    const parts = u.hostname.split('.gallerycdn.');
+    if (parts.length === 2) {
+      const regions = ['gallerycdn.azure.cn', 'gallerycdn.vsassets.io', 'gallerycdn.visualstudio.com'];
+      for (const region of regions) {
+        const alt = new URL(url);
+        alt.hostname = parts[0] + '.' + region;
+        if (alt.hostname !== u.hostname && !variants.includes(alt.toString())) {
+          variants.push(alt.toString());
+        }
+      }
+    }
+  } catch {
+    // 忽略非法 URL
+  }
+  return variants;
+}
+
+/** 下载 CDN 文件：依次尝试各域名候选，返回第一个成功的内容 */
+async function httpsGetWithCdnFallback(url: string): Promise<string> {
+  const variants = cdnUrlVariants(url);
+  let lastErr: unknown;
+  for (const v of variants) {
+    try {
+      const body = await httpsGet(v);
+      if (body && body.trim()) return body;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('所有 CDN 域名下载失败: ' + url);
+}
+
+/** 先按 ID 精确查询扩展，再获取 README（Markdown 或 HTML 格式）
  * @param publisher 发布者名称
  * @param name 扩展技术名，如 "prettier-vscode" 
  * @param readmeUrl 可选的 README 直链 URL（优先使用）
+ * @param detailUrl 可选的详情内容直链（Content.Details，通常是完整 README）
  */
-export async function getExtensionReadme(publisher: string, name: string, readmeUrl?: string): Promise<string> {
+export async function getExtensionReadme(publisher: string, name: string, readmeUrl?: string, detailUrl?: string): Promise<string> {
   try {
-    console.log(`[getExtensionReadme] 开始获取: ${publisher}.${name}, readmeUrl=${readmeUrl}`);
+    console.log(`[getExtensionReadme] 开始获取: ${publisher}.${name}, readmeUrl=${readmeUrl}, detailUrl=${detailUrl}`);
 
-    // 1. 如果有直链，直接下载
+    // 1. 如果有直链，直接下载（支持 CDN 域名降级）
     if (readmeUrl) {
       try {
         console.log(`[getExtensionReadme] 通过直链下载: ${readmeUrl}`);
-        const readmeResp = await httpsGet(readmeUrl);
+        const readmeResp = await httpsGetWithCdnFallback(readmeUrl);
         console.log(`[getExtensionReadme] 直链响应长度: ${readmeResp.length}`);
         if (readmeResp.trim()) {
           return simpleMarkdownToHtml(readmeResp);
@@ -305,7 +353,7 @@ export async function getExtensionReadme(publisher: string, name: string, readme
     if (files?.readmeUrl) {
       try {
         console.log(`[getExtensionReadme] 下载 README: ${files.readmeUrl}`);
-        const readmeResp = await httpsGet(files.readmeUrl);
+        const readmeResp = await httpsGetWithCdnFallback(files.readmeUrl);
         console.log(`[getExtensionReadme] README 响应长度: ${readmeResp.length}`);
         if (readmeResp.trim()) {
           return simpleMarkdownToHtml(readmeResp);
@@ -314,11 +362,13 @@ export async function getExtensionReadme(publisher: string, name: string, readme
         console.warn(`[getExtensionReadme] 精确查询 readmeUrl 下载失败`, e);
       }
     }
-    // 3. 备用：尝试获取长描述（Content.Details），几乎每个扩展都有
-    if (files?.detailUrl) {
+
+    // 3. 下载 Content.Details（通常是完整 README 的 Markdown/HTML）
+    const detailsUrl = detailUrl || files?.detailUrl;
+    if (detailsUrl) {
       try {
-        console.log(`[getExtensionReadme] 下载 Details: ${files.detailUrl}`);
-        const detailResp = await httpsGet(files.detailUrl);
+        console.log(`[getExtensionReadme] 下载 Details: ${detailsUrl}`);
+        const detailResp = await httpsGetWithCdnFallback(detailsUrl);
         console.log(`[getExtensionReadme] Details 响应长度: ${detailResp.length}`);
         if (detailResp.trim()) {
           return simpleMarkdownToHtml(detailResp);
@@ -391,8 +441,8 @@ async function httpsGet(url: string): Promise<string> {
 
 /** Markdown → HTML 转换（增强版，支持纯 HTML 透传） */
 function simpleMarkdownToHtml(md: string): string {
-  // 如果已经是 HTML 内容（包含标签），直接返回
-  if (/<html|<body|<div|<p|<h[1-6]|<table|<pre|<img|<a|<ul|<ol/i.test(md)) {
+  // 只有块级容器标签开头才视为 HTML 直接透传，避免误判 Markdown 中内嵌的 <a> <pre> 等
+  if (/^\s*<(html|body|div|table|section|article|main|header|footer)\b/i.test(md)) {
     console.log('[simpleMarkdownToHtml] 检测到 HTML 内容，直接透传');
     return md;
   }

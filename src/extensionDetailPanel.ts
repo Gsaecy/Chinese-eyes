@@ -3,6 +3,7 @@ import { Translator } from './translator';
 import { ExtensionItem } from './types';
 import { getExtensionReadme } from './marketplaceApi';
 import { icon } from './icons';
+import { APPLE_CSS } from './theme';
 
 /**
  * 扩展详情面板（在主编辑区独立 webview panel）
@@ -97,7 +98,8 @@ export class ExtensionDetailPanel {
       const readme = await getExtensionReadme(
         this._item.publisher,
         this._item.extensionName || this._item.id.split('.').slice(1).join('.'),
-        this._item.readmeUrl
+        this._item.readmeUrl,
+        this._item.detailUrl
       );
       this._originalReadme = readme || '';
       // 将原文 README 发送到 webview 显示
@@ -129,7 +131,7 @@ export class ExtensionDetailPanel {
     }
     this.post({ type: 'summarizing' });
     try {
-      const isHtml = /<\w+/.test(this._originalReadme);
+      const isHtml = /^\s*<(html|body|div|table|section|article|main|header|footer)\b/i.test(this._originalReadme);
       const text = (isHtml ? stripHtml(this._originalReadme) : this._originalReadme) || this._item.description;
       if (!text || !text.trim()) {
         this.post({
@@ -195,7 +197,7 @@ export class ExtensionDetailPanel {
     }
     this.post({ type: 'translatingReadme' });
     try {
-      const isHtml = /<\w+/.test(this._originalReadme);
+      const isHtml = /^\s*<(html|body|div|table|section|article|main|header|footer)\b/i.test(this._originalReadme);
       const text = isHtml ? stripHtml(this._originalReadme) : this._originalReadme;
       const res = await this._translator.translateMarkdown(text, this.getProxyUrl());
       this._translatedReadme = res.text;
@@ -235,90 +237,66 @@ export class ExtensionDetailPanel {
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 <style nonce="${N}">
-:root{
-  --fg:var(--vscode-editor-foreground);
-  --bg:var(--vscode-editor-background);
-  --card:var(--vscode-sideBar-background);
-  --border:var(--vscode-widget-border, rgba(128,128,128,.3));
-  --btn:var(--vscode-button-background);
-  --btn-fg:var(--vscode-button-foreground);
-  --btn-hover:var(--vscode-button-hoverBackground);
-  --sub:var(--vscode-descriptionForeground);
-  --link:var(--vscode-textLink-foreground);
-  --success:#1ea55b;--warning:#c9a93c;--error:#c95c3c;
-}
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:var(--vscode-font-family);color:var(--fg);background:var(--bg);font-size:14px;line-height:1.6}
-.container{max-width:920px;margin:0 auto;padding:20px}
-.header{display:flex;gap:16px;padding-bottom:18px;border-bottom:1px solid var(--border);margin-bottom:18px}
-.header .icon{width:80px;height:80px;border-radius:10px;background:rgba(128,128,128,.15);flex-shrink:0;object-fit:contain}
-.header .icon-fallback{width:80px;height:80px;border-radius:10px;background:rgba(128,128,128,.15);display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:700;color:var(--sub);flex-shrink:0}
+${APPLE_CSS}
+/* ===== 详情页布局 ===== */
+body{font-size:14px;line-height:1.6}
+.container{max-width:960px;margin:0 auto;padding:28px 24px}
+.header{display:flex;gap:18px;padding:24px;margin-bottom:18px}
+.header .icon{width:76px;height:76px;border-radius:18px;background:var(--chip-bg);flex-shrink:0;object-fit:contain}
+.header .icon-fallback{width:76px;height:76px;border-radius:18px;background:var(--chip-bg);display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:700;color:var(--text-sub);flex-shrink:0}
 .header .info{flex:1;min-width:0}
-.header .title{font-size:22px;font-weight:700;line-height:1.2;margin-bottom:4px;word-break:break-word}
-.header .publisher{font-size:13px;color:var(--sub);margin-bottom:8px}
-.header .desc{font-size:13px;color:var(--fg);margin-bottom:6px;opacity:.9}
-.header .desc-zh{font-size:13px;border-left:3px solid var(--success);padding-left:8px;margin-bottom:6px;color:var(--fg)}
-.header .meta{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--sub);margin-top:6px}
-.header .badge{padding:2px 8px;border-radius:10px;font-size:11px}
-.header .badge.free{background:rgba(30,165,91,.15);color:var(--success)}
-.header .badge.paid{background:rgba(201,92,60,.15);color:var(--error)}
-.header .badge.maybe{background:rgba(201,169,60,.15);color:var(--warning)}
-.actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
-.actions button,.actions a{padding:6px 14px;border:1px solid var(--border);border-radius:4px;background:transparent;color:var(--fg);cursor:pointer;font-size:12px;text-decoration:none;display:inline-block}
-.actions button:hover,.actions a:hover{background:var(--btn);color:var(--btn-fg);border-color:var(--btn)}
-.actions .primary{background:var(--btn);color:var(--btn-fg);border-color:var(--btn)}
-.actions .primary:hover{background:var(--btn-hover)}
-.section{margin-bottom:24px;padding:14px;background:var(--card);border:1px solid var(--border);border-radius:8px}
-.section.summary{border-color:var(--link)}
-.section.readme{border-color:var(--border)}
-.section-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
-.section-head h2{font-size:15px;font-weight:600;display:flex;align-items:center;gap:6px}
+.header .title{font-size:24px;font-weight:700;letter-spacing:-.02em;line-height:1.15;margin-bottom:4px;word-break:break-word}
+.header .publisher{font-size:12.5px;color:var(--text-sub);margin-bottom:10px}
+.header .desc{font-size:13px;color:var(--text);margin-bottom:6px;opacity:.92;line-height:1.6}
+.header .desc-zh{font-size:13px;border-left:3px solid var(--accent);padding-left:10px;margin-bottom:6px;color:var(--text);line-height:1.6}
+.header .meta{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--text-sub);margin-top:8px}
+.header .meta .bicon{display:inline-flex;align-items:center;gap:3px}
+.actions{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;align-items:center}
+.actions a{text-decoration:none;color:var(--accent)}
+.section{margin-bottom:18px;padding:18px}
+.section.summary{border-color:var(--line-strong)}
+.section.readme{border-color:var(--line)}
+.section-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.section-head h2{font-size:15px;font-weight:700;display:flex;align-items:center;gap:7px;letter-spacing:-.01em}
 .section-head .controls{display:flex;gap:6px}
-.section-head .controls button{padding:4px 10px;font-size:11px;border:1px solid var(--border);background:transparent;color:var(--sub);border-radius:4px;cursor:pointer}
-.section-head .controls button:hover{background:var(--btn);color:var(--btn-fg);border-color:var(--btn)}
-.section-head .controls button.active{background:var(--btn);color:var(--btn-fg);border-color:var(--btn)}
-.section-body{color:var(--fg);font-size:13px;line-height:1.75}
-.section-body.markdown h1,.section-body.markdown h2,.section-body.markdown h3,.section-body.markdown h4{margin:14px 0 6px;font-weight:700}
+.section-head .controls button{padding:4px 12px;font-size:11.5px;border:1px solid var(--line);background:transparent;color:var(--text-sub);border-radius:var(--radius-pill);cursor:pointer;font-family:inherit}
+.section-head .controls button:hover{color:var(--text);background:var(--chip-bg)}
+.section-head .controls button.active{background:var(--accent);color:#fff;border-color:transparent}
+.section-body{color:var(--text);font-size:13px;line-height:1.75}
+.section-body.markdown h1,.section-body.markdown h2,.section-body.markdown h3,.section-body.markdown h4{margin:14px 0 6px;font-weight:700;letter-spacing:-.01em}
 .section-body.markdown h1{font-size:20px}
-.section-body.markdown h2{font-size:17px;padding-bottom:4px;border-bottom:1px solid var(--border)}
+.section-body.markdown h2{font-size:17px;padding-bottom:4px;border-bottom:1px solid var(--line)}
 .section-body.markdown h3{font-size:15px}
 .section-body.markdown p{margin:6px 0}
 .section-body.markdown ul,.section-body.markdown ol{margin:6px 0 6px 20px}
 .section-body.markdown li{margin:2px 0}
-.section-body.markdown code{font-family:var(--vscode-editor-font-family, monospace);background:rgba(128,128,128,.15);padding:1px 5px;border-radius:3px;font-size:12px}
-.section-body.markdown pre{background:rgba(128,128,128,.1);padding:10px;border-radius:4px;overflow:auto;margin:8px 0}
+.section-body.markdown code{font-family:var(--vscode-editor-font-family, monospace);background:var(--chip-bg);padding:1px 5px;border-radius:4px;font-size:12px}
+.section-body.markdown pre{background:var(--chip-bg);padding:12px;border-radius:var(--radius-m);overflow:auto;margin:8px 0}
 .section-body.markdown pre code{background:transparent;padding:0}
-.section-body.markdown blockquote{border-left:3px solid var(--sub);padding-left:10px;color:var(--sub);margin:6px 0}
-.section-body.markdown a{color:var(--link);text-decoration:none}
+.section-body.markdown blockquote{border-left:3px solid var(--line-strong);padding-left:10px;color:var(--text-sub);margin:6px 0}
+.section-body.markdown a{color:var(--accent);text-decoration:none}
 .section-body.markdown a:hover{text-decoration:underline}
-.section-body.markdown img{max-width:100%;height:auto;border-radius:4px}
+.section-body.markdown img{max-width:100%;height:auto;border-radius:var(--radius-m)}
 .section-body.markdown table{border-collapse:collapse;margin:8px 0;width:100%}
-.section-body.markdown table td,.section-body.markdown table th{border:1px solid var(--border);padding:5px 8px}
-.section-body.markdown hr{border:none;border-top:1px solid var(--border);margin:10px 0}
-.empty-state{color:var(--sub);font-style:italic;padding:12px;text-align:center}
-.loading-state{display:flex;align-items:center;justify-content:center;gap:8px;padding:18px;color:var(--sub)}
-.spinner{width:14px;height:14px;border:2px solid var(--sub);border-top-color:var(--btn);border-radius:50%;animation:spin .8s linear infinite}
-@keyframes spin{to{transform:rotate(360deg)}}
-.error-state{padding:10px;background:rgba(201,92,60,.1);border:1px solid var(--error);border-radius:4px;color:var(--error);font-size:12px}
-.warn-note{margin-top:10px;padding:8px 12px;background:rgba(201,169,60,.12);border:1px solid var(--warning);border-radius:4px;color:var(--fg);font-size:12px;line-height:1.6;display:flex;gap:6px;align-items:flex-start}
-.warn-note .ico{margin-top:2px}
-.ico{width:14px;height:14px;flex-shrink:0}
-.summary-cta{padding:14px;text-align:center;color:var(--sub);font-size:13px}
-.summary-cta button{margin-top:8px;padding:8px 20px;background:var(--link);color:var(--btn-fg);border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600}
-.summary-cta button:hover{opacity:.9}
-.summary-cta button:disabled{opacity:.4;cursor:not-allowed}
+.section-body.markdown table td,.section-body.markdown table th{border:1px solid var(--line);padding:5px 8px}
+.section-body.markdown hr{border:none;border-top:1px solid var(--line);margin:10px 0}
+.empty-state{color:var(--text-weak);font-style:italic;padding:12px;text-align:center}
+.loading-state{display:flex;align-items:center;justify-content:center;gap:8px;padding:18px;color:var(--text-weak)}
+.error-state{padding:10px 14px;background:rgba(255,59,48,.1);border:1px solid rgba(255,59,48,.35);border-radius:var(--radius-m);color:#ff453a;font-size:12px}
+.summary-cta{padding:18px;text-align:center;color:var(--text-sub);font-size:13px}
+.summary-cta button{margin-top:10px}
 </style>
 </head>
 <body>
 <div class="container">
-  <div class="header" id="headerBlock">
+  <div class="header ap-card" id="headerBlock">
     <div class="icon-fallback">…</div>
     <div class="info">
       <div class="title">加载中…</div>
     </div>
   </div>
 
-  <div class="section summary" id="summarySection">
+  <div class="section summary ap-card" id="summarySection">
     <div class="section-head">
       <h2>${icon('sparkle')} AI 总结</h2>
       <div class="controls">
@@ -330,12 +308,12 @@ body{font-family:var(--vscode-font-family);color:var(--fg);background:var(--bg);
     <div class="section-body" id="summaryBody">
       <div class="summary-cta">
         点击下方按钮，让 AI 用中文总结这个扩展的用途、收费和用法。<br>
-        <button id="generateSummaryBtn">生成 AI 总结</button>
+        <button id="generateSummaryBtn" class="ap-btn ap-btn-primary">生成 AI 总结</button>
       </div>
     </div>
   </div>
 
-  <div class="section readme" id="readmeSection" style="display:none">
+  <div class="section readme ap-card" id="readmeSection" style="display:none">
     <div class="section-head">
       <h2>${icon('doc')} 扩展详情原文</h2>
       <div class="controls">
@@ -343,7 +321,7 @@ body{font-family:var(--vscode-font-family);color:var(--fg);background:var(--bg);
       </div>
     </div>
     <div class="section-body markdown" id="readmeBody"></div>
-    <div class="warn-note" id="readmeWarn" style="display:none"></div>
+    <div class="ap-note" id="readmeWarn" style="display:none"></div>
   </div>
 </div>
 
@@ -390,8 +368,8 @@ function fmtCount(n){
 
 function md(text){
   if (!text) return '';
-  // 已是 HTML，直接信任
-  if (/<(html|body|div|p|h[1-6]|table|pre|img|a|ul|ol)/i.test(text)) return text;
+  // 只有块级容器标签开头才视为 HTML 直接信任，否则按 Markdown 渲染
+  if (/^\s*<(html|body|div|table|section|article|main|header|footer)\b/i.test(text)) return text;
   let h = text;
   h = h.replace(/\\r\\n/g, '\\n');
   // fenced code
@@ -446,10 +424,10 @@ function md(text){
 function renderHeader(item){
   if (!item) return;
   const badge = item.pricingStatus === 'paid'
-    ? '<span class="badge paid">付费</span>'
+    ? '<span class="ap-badge red">付费</span>'
     : item.pricingStatus === 'maybePaid'
-      ? '<span class="badge maybe">可能付费</span>'
-      : '<span class="badge free">免费</span>';
+      ? '<span class="ap-badge orange">可能付费</span>'
+      : '<span class="ap-badge green">免费</span>';
   const iconHtml = item.iconUrl
     ? '<img class="icon" src="' + esc(item.iconUrl) + '" alt="">'
     : '<div class="icon-fallback">' + esc((item.displayName || '?').slice(0,1).toUpperCase()) + '</div>';
@@ -468,13 +446,13 @@ function renderHeader(item){
     + desc
     + '<div class="meta">'
       + badge
-      + '<span style="display:inline-flex;align-items:center;gap:3px">${icon('download', 12)}' + fmtCount(item.installCount) + ' 次安装</span>'
-      + (item.ratingScore ? '<span style="display:inline-flex;align-items:center;gap:3px">${icon('star', 12)}' + item.ratingScore.toFixed(1) + '（' + fmtCount(item.ratingCount) + '）</span>' : '')
+      + '<span class="bicon">${icon('download', 12)}' + fmtCount(item.installCount) + ' 次安装</span>'
+      + (item.ratingScore ? '<span class="bicon">${icon('star', 12)}' + item.ratingScore.toFixed(1) + '（' + fmtCount(item.ratingCount) + '）</span>' : '')
       + (item.lastUpdated ? '<span>更新于 ' + new Date(item.lastUpdated).toLocaleDateString('zh-CN') + '</span>' : '')
     + '</div>'
     + '<div class="actions">'
-      + '<button class="primary" id="installBtn">在 VS Code 中安装</button>'
-      + '<button id="openMarketBtn">打开市场页 ${icon('external', 12)}</button>'
+      + '<button class="ap-btn ap-btn-primary" id="installBtn">在 VS Code 中安装</button>'
+      + '<button class="ap-btn" id="openMarketBtn">打开市场页 ${icon('external', 12)}</button>'
       + (repo ? '<a href="' + esc(item.repositoryUrl) + '" target="_blank">代码仓库 ${icon('external', 12)}</a>' : '')
       + (license ? '<a href="' + esc(item.licenseUrl) + '" target="_blank">许可证 ${icon('external', 12)}</a>' : '')
     + '</div>'
@@ -561,7 +539,7 @@ window.addEventListener('message', (event) => {
       state.item = msg.item;
       renderHeader(msg.item);
       if (msg.openSummary){
-        summaryBody.innerHTML = '<div class="loading-state"><span class="spinner"></span>生成 AI 总结中…</div>';
+        summaryBody.innerHTML = '<div class="loading-state"><span class="ap-spinner"></span>生成 AI 总结中…</div>';
       }
       // 如果有 originalReadme，显示原文区块
       if (msg.originalReadme) {
@@ -577,7 +555,7 @@ window.addEventListener('message', (event) => {
       updateReadmeDisplay();
       break;
     case 'summarizing':
-      summaryBody.innerHTML = '<div class="loading-state"><span class="spinner"></span>AI 总结生成中…</div>';
+      summaryBody.innerHTML = '<div class="loading-state"><span class="ap-spinner"></span>AI 总结生成中…</div>';
       break;
     case 'summaryDone':
       state.summaryZh = msg.summaryZh || '';
