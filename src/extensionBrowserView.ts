@@ -853,6 +853,45 @@ if (detectModelsBtn) {
   });
 }
 
+/* ---- 应用/保存状态机与防误触 ---- */
+let appliedKey = '';   // 已成功应用/保存的 API Key（trim 后）
+let busyTimer = null;
+
+function updateApplyBtnState(){
+  const key = apiKeyInput.value.trim();
+  const isApplied = !!key && key === appliedKey;
+  applyKeyBtn.textContent = isApplied ? '已应用' : '应用';
+  applyKeyBtn.classList.toggle('ap-btn-success', isApplied);
+  applyKeyBtn.classList.toggle('ap-btn-primary', !isApplied);
+}
+
+function setSettingsBusy(busy){
+  // 写入期间禁用设置面板内所有控件，防止误操作
+  settingsArea.querySelectorAll('button, select, input').forEach((c) => { c.disabled = busy; });
+  clearTimeout(busyTimer);
+  if (busy) {
+    // 防卡死：20 秒后强制恢复界面
+    busyTimer = setTimeout(() => {
+      setSettingsBusy(false);
+      if (applyKeyBtn.textContent === '应用中…') { appliedKey = ''; }
+      if (saveSettingsBtn.textContent === '保存中…') { saveSettingsBtn.textContent = '保存'; }
+      showToast('操作超时，已恢复界面，请重试', 'error');
+    }, 20000);
+  } else {
+    saveSettingsBtn.textContent = '保存';
+    updateApplyBtnState();
+  }
+}
+
+// API 输入框被编辑（换了新 Key）→ 应用按钮恢复蓝色「应用」
+apiKeyInput.addEventListener('input', () => {
+  const key = apiKeyInput.value.trim();
+  if (appliedKey && key !== appliedKey) {
+    appliedKey = '';
+  }
+  updateApplyBtnState();
+});
+
 // 应用按钮：单独保存 API Key 并自动检测模型（防止未点底部保存导致 Key 丢失）
 if (applyKeyBtn) {
   applyKeyBtn.addEventListener('click', () => {
@@ -864,8 +903,9 @@ if (applyKeyBtn) {
       vendorSelect.focus();
       return;
     }
-    applyKeyBtn.disabled = true;
+    setSettingsBusy(true);
     applyKeyBtn.textContent = '应用中…';
+    applyKeyBtn.classList.remove('ap-btn-success');
     vscode.postMessage({
       type: 'applyApiKey',
       provider: vendorProvider(vendor),
@@ -938,7 +978,7 @@ saveSettingsBtn.addEventListener('click', () => {
     vendorSelect.focus();
     return;
   }
-  saveSettingsBtn.disabled = true;
+  setSettingsBusy(true);
   saveSettingsBtn.textContent = '保存中…';
   vscode.postMessage({
     type: 'saveSettings',
@@ -1000,13 +1040,18 @@ window.addEventListener('message', (event) => {
       endpointInput.value = msg.endpoint || '';
       modelInput.value = msg.model || '';
       vendorSelect.value = vendorFromConfig(msg.provider, msg.endpoint, msg.model);
+      // 已保存过 Key 的显示「已应用」绿色状态
+      appliedKey = msg.apiKey || '';
+      updateApplyBtnState();
       // 按地址匹配预设列出候选模型，当前已填模型保持选中且不被覆盖
       const matched = presetByEndpoint(msg.endpoint);
       populateModelSelect(matched ? matched.preset.models : (msg.model ? [msg.model] : []));
       break;
     case 'applyApiKeyResult':
-      applyKeyBtn.disabled = false;
-      applyKeyBtn.textContent = '应用';
+      setSettingsBusy(false);
+      // 应用成功：记录已应用的 Key，按钮变绿色「已应用」
+      appliedKey = apiKeyInput.value.trim();
+      updateApplyBtnState();
       state.provider = msg.provider || 'local';
       state.hasApiKey = !!msg.hasApiKey;
       state.canSummarize = !!msg.canSummarize;
@@ -1035,8 +1080,10 @@ window.addEventListener('message', (event) => {
       }
       break;
     case 'settingsSaved':
-      saveSettingsBtn.disabled = false;
-      saveSettingsBtn.textContent = '保存';
+      setSettingsBusy(false);
+      // 保存成功也视为已应用（Key 已持久化）
+      appliedKey = apiKeyInput.value.trim();
+      updateApplyBtnState();
       state.provider = msg.provider;
       state.hasApiKey = !!msg.hasApiKey;
       state.canSummarize = !!msg.canSummarize;
@@ -1048,8 +1095,10 @@ window.addEventListener('message', (event) => {
       break;
     case 'error':
       state.loading = false;
-      saveSettingsBtn.disabled = false;
-      saveSettingsBtn.textContent = '保存';
+      // 若设置面板处于写入状态（应用中/保存中），恢复界面防止卡死
+      if (applyKeyBtn.textContent === '应用中…' || saveSettingsBtn.textContent === '保存中…') {
+        setSettingsBusy(false);
+      }
       showToast(msg.message, 'error');
       // 搜索失败后恢复欢迎页，让用户可以重试
       if (state.items.length === 0) {

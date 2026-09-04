@@ -78,6 +78,8 @@ body{
 .ap-btn:disabled{opacity:.45;cursor:not-allowed}
 .ap-btn-primary{background:var(--accent);border-color:transparent;color:#fff}
 .ap-btn-primary:hover{background:var(--accent-hover)}
+.ap-btn-success{background:#34c759;border-color:transparent;color:#fff}
+.ap-btn-success:hover{background:#2db84e}
 .ap-btn-ghost{border-color:var(--line);color:var(--text-sub);background:transparent}
 .ap-btn-ghost:hover{color:var(--text);background:var(--chip-bg)}
 .ap-btn-sm{padding:5px 12px;font-size:11.5px;gap:4px}
