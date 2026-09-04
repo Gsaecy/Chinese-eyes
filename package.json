@@ -2,9 +2,9 @@
   "name": "ext-trans-picker",
   "displayName": "扩展选择助手",
   "description": "Browse VS Code marketplace, auto-translate details to Chinese, AI summary for usage/pricing/guide",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "publisher": "honor-world",
-  "license": "MIT",
+  "license": "GPL-3.0",
   "activationEvents": [
     "onCommand:chineseEyes.openPanel",
     "onCommand:chineseEyes.openSettings",
@@ -85,13 +85,20 @@
           "description": "打开扩展详情时自动翻译 README 内容",
           "order": 5
         },
+        "chineseEyes.proxyUrl": {
+          "type": "string",
+          "default": "",
+          "description": "HTTP 代理地址（用于免费在线翻译，如 http://127.0.0.1:7890）",
+          "markdownDescription": "HTTP 代理地址（用于免费在线翻译），例如 `http://127.0.0.1:7890`。留空时自动使用 VS Code 的 http.proxy 设置",
+          "order": 6
+        },
         "chineseEyes.pageSize": {
           "type": "number",
           "default": 20,
           "minimum": 10,
           "maximum": 50,
           "description": "扩展列表每页显示数量",
-          "order": 6
+          "order": 7
         }
       }
     },
@@ -100,7 +107,7 @@
         {
           "id": "chineseEyes-sidebar",
           "title": "扩展选择助手",
-          "icon": "media/icon.png"
+          "icon": "media/icon.svg"
         }
       ]
     },
@@ -116,15 +123,15 @@
     "commands": [
       {
         "command": "chineseEyes.openPanel",
-        "title": "🌐 扩展选择助手 - 打开扩展列表"
+        "title": "$(extensions) 扩展选择助手：打开扩展列表"
       },
       {
         "command": "chineseEyes.openSettings",
-        "title": "🌐 扩展选择助手 - 打开设置"
+        "title": "$(settings-gear) 扩展选择助手：打开设置"
       },
       {
         "command": "chineseEyes.openTranslator",
-        "title": "🌐 扩展选择助手 - 打开翻译面板",
+        "title": "$(symbol-text) 扩展选择助手：打开翻译面板",
         "icon": "$(symbol-text)"
       }
     ],

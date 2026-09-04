@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { Translator } from './translator';
 import { ExtensionItem } from './types';
 import { getExtensionReadme } from './marketplaceApi';
+import { icon } from './icons';
 
 /**
  * 扩展详情面板（在主编辑区独立 webview panel）
@@ -122,7 +123,7 @@ export class ExtensionDetailPanel {
     if (!this._translator.canSummarize()) {
       this.post({
         type: 'summaryError',
-        message: '需要配置 DeepSeek 或 OpenAI 兼容 API Key 才能使用 AI 总结。请打开侧边栏「⚙ 设置」。',
+        message: '需要配置 DeepSeek 或 OpenAI 兼容 API Key 才能使用 AI 总结。请打开侧边栏「设置」。',
       });
       return;
     }
@@ -196,9 +197,9 @@ export class ExtensionDetailPanel {
     try {
       const isHtml = /<\w+/.test(this._originalReadme);
       const text = isHtml ? stripHtml(this._originalReadme) : this._originalReadme;
-      const translated = await this._translator.translateMarkdown(text);
-      this._translatedReadme = translated;
-      this.post({ type: 'translateReadmeDone', translated });
+      const res = await this._translator.translateMarkdown(text, this.getProxyUrl());
+      this._translatedReadme = res.text;
+      this.post({ type: 'translateReadmeDone', translated: res.text, warning: res.warning });
     } catch (err: any) {
       this.post({ type: 'translateReadmeError', message: err.message || String(err) });
     }
@@ -206,6 +207,15 @@ export class ExtensionDetailPanel {
 
   private post(msg: any): void {
     this._panel.webview.postMessage(msg);
+  }
+
+  /** 优先使用 chineseEyes.proxyUrl，其次 VS Code 内置 http.proxy 设置 */
+  private getProxyUrl(): string {
+    const ch = vscode.workspace.getConfiguration('chineseEyes');
+    const explicit = (ch.get('proxyUrl') as string) || '';
+    if (explicit) return explicit;
+    const httpCfg = vscode.workspace.getConfiguration('http');
+    return (httpCfg.get('proxy') as string) || '';
   }
 
   private buildHtml(webview: vscode.Webview): string {
@@ -290,6 +300,9 @@ body{font-family:var(--vscode-font-family);color:var(--fg);background:var(--bg);
 .spinner{width:14px;height:14px;border:2px solid var(--sub);border-top-color:var(--btn);border-radius:50%;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 .error-state{padding:10px;background:rgba(201,92,60,.1);border:1px solid var(--error);border-radius:4px;color:var(--error);font-size:12px}
+.warn-note{margin-top:10px;padding:8px 12px;background:rgba(201,169,60,.12);border:1px solid var(--warning);border-radius:4px;color:var(--fg);font-size:12px;line-height:1.6;display:flex;gap:6px;align-items:flex-start}
+.warn-note .ico{margin-top:2px}
+.ico{width:14px;height:14px;flex-shrink:0}
 .summary-cta{padding:14px;text-align:center;color:var(--sub);font-size:13px}
 .summary-cta button{margin-top:8px;padding:8px 20px;background:var(--link);color:var(--btn-fg);border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600}
 .summary-cta button:hover{opacity:.9}
@@ -307,7 +320,7 @@ body{font-family:var(--vscode-font-family);color:var(--fg);background:var(--bg);
 
   <div class="section summary" id="summarySection">
     <div class="section-head">
-      <h2>💡 AI 总结</h2>
+      <h2>${icon('sparkle')} AI 总结</h2>
       <div class="controls">
         <button id="showSummaryZhBtn" class="active">中文</button>
         <button id="showSummaryEnBtn">英文</button>
@@ -324,18 +337,20 @@ body{font-family:var(--vscode-font-family);color:var(--fg);background:var(--bg);
 
   <div class="section readme" id="readmeSection" style="display:none">
     <div class="section-head">
-      <h2>📄 扩展详情原文</h2>
+      <h2>${icon('doc')} 扩展详情原文</h2>
       <div class="controls">
         <button id="translateReadmeBtn">翻译</button>
       </div>
     </div>
     <div class="section-body markdown" id="readmeBody"></div>
+    <div class="warn-note" id="readmeWarn" style="display:none"></div>
   </div>
 </div>
 
 <script nonce="${N}">
 const vscode = acquireVsCodeApi();
 const el = (id) => document.getElementById(id);
+const ICON_WARNING = '<svg class="ico" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.25 14.5 13.5h-13z"/><path d="M8 6.5v3.25"/><path d="M8 11.75h.01"/></svg>';
 const headerBlock = el('headerBlock');
 const summaryBody = el('summaryBody');
 const generateSummaryBtn = el('generateSummaryBtn');
@@ -345,6 +360,7 @@ const showSummaryEnBtn = el('showSummaryEnBtn');
 const readmeSection = el('readmeSection');
 const readmeBody = el('readmeBody');
 const translateReadmeBtn = el('translateReadmeBtn');
+const readmeWarn = el('readmeWarn');
 
 let state = {
   item: null,
@@ -452,15 +468,15 @@ function renderHeader(item){
     + desc
     + '<div class="meta">'
       + badge
-      + '<span>⬇ ' + fmtCount(item.installCount) + ' 次安装</span>'
-      + (item.ratingScore ? '<span>★ ' + item.ratingScore.toFixed(1) + '（' + fmtCount(item.ratingCount) + '）</span>' : '')
+      + '<span style="display:inline-flex;align-items:center;gap:3px">${icon('download', 12)}' + fmtCount(item.installCount) + ' 次安装</span>'
+      + (item.ratingScore ? '<span style="display:inline-flex;align-items:center;gap:3px">${icon('star', 12)}' + item.ratingScore.toFixed(1) + '（' + fmtCount(item.ratingCount) + '）</span>' : '')
       + (item.lastUpdated ? '<span>更新于 ' + new Date(item.lastUpdated).toLocaleDateString('zh-CN') + '</span>' : '')
     + '</div>'
     + '<div class="actions">'
       + '<button class="primary" id="installBtn">在 VS Code 中安装</button>'
-      + '<button id="openMarketBtn">打开市场页 ↗</button>'
-      + (repo ? '<a href="' + esc(item.repositoryUrl) + '" target="_blank">代码仓库 ↗</a>' : '')
-      + (license ? '<a href="' + esc(item.licenseUrl) + '" target="_blank">许可证 ↗</a>' : '')
+      + '<button id="openMarketBtn">打开市场页 ${icon('external', 12)}</button>'
+      + (repo ? '<a href="' + esc(item.repositoryUrl) + '" target="_blank">代码仓库 ${icon('external', 12)}</a>' : '')
+      + (license ? '<a href="' + esc(item.licenseUrl) + '" target="_blank">许可证 ${icon('external', 12)}</a>' : '')
     + '</div>'
     + '</div>';
   const installBtn = el('installBtn');
@@ -590,6 +606,12 @@ window.addEventListener('message', (event) => {
       translateReadmeBtn.disabled = false;
       translateReadmeBtn.textContent = '显示原文';
       updateReadmeDisplay();
+      if (msg.warning) {
+        readmeWarn.innerHTML = ICON_WARNING + '<span>' + esc(msg.warning) + '</span>';
+        readmeWarn.style.display = 'flex';
+      } else {
+        readmeWarn.style.display = 'none';
+      }
       break;
     case 'translateReadmeError':
       translateReadmeBtn.disabled = false;

@@ -16,33 +16,26 @@ const DEFAULT_PAGE_SIZE = 30;
  * 调用 VS Code Marketplace API 查询扩展
  * 这是 VS Code 本身使用的公开 API
  */
-export async function queryExtensions(
-  options: MarketplaceQueryOptions
-): Promise<{ extensions: ExtensionItem[]; total: number }> {
-  const { text = '', pageNumber = 1, pageSize = DEFAULT_PAGE_SIZE, category, sortBy } = options;
+/**
+ * Marketplace 过滤器类型（与 VS Code 官方 vsce 一致）
+ * 1=Tag 4=ExtensionId 5=Category 7=ExtensionName 8=Target 10=SearchText
+ */
+const FILTER = {
+  TAG: 1,
+  EXTENSION_ID: 4,
+  CATEGORY: 5,
+  EXTENSION_NAME: 7,
+  TARGET: 8,
+  SEARCH_TEXT: 10,
+} as const;
 
-  // 构建查询条件
-  const criteria: any[] = [
-    { filterType: 8, value: 'Microsoft.VisualStudio.Code' }, // Target filter
-  ];
-
-  if (text) {
-    // 检测 publisher.extension 格式，按扩展 ID 精确搜索
-    const idMatch = text.match(/^([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_-]+)$/);
-    if (idMatch) {
-      // 精确 ID 搜索：只使用 ExtensionName filter，不加模糊搜索词
-      criteria.push({ filterType: 7, value: text });
-    } else {
-      criteria.push({ filterType: 1, value: text }); // 普通关键词搜索
-    }
-  }
-
-  if (category) {
-    criteria.push({ filterType: 5, value: category }); // Category filter
-  }
-
-  // 构建请求体
-  const requestBody = JSON.stringify({
+function buildRequestBody(
+  criteria: any[],
+  pageNumber: number,
+  pageSize: number,
+  sortBy?: string
+): string {
+  return JSON.stringify({
     filters: [
       {
         criteria,
@@ -54,17 +47,93 @@ export async function queryExtensions(
     ],
     flags: 0x1 | 0x2 | 0x4 | 0x8 | 0x80 | 0x100 | 0x200,
   });
+}
 
-  const data = await httpsPost(MARKETPLACE_API_URL, requestBody);
-
+function parseResult(data: string): {
+  extensions: RawGalleryExtension[];
+  total: number;
+} {
   const result = JSON.parse(data);
   const rawExtensions: RawGalleryExtension[] = result.results?.[0]?.extensions ?? [];
-
-  // 解析总数
   const total =
     result.results?.[0]?.resultMetadata?.find(
       (m: any) => m.metadataType === 'ResultCount'
     )?.metadataItems?.[0]?.count ?? 0;
+  return { extensions: rawExtensions, total };
+}
+
+export async function queryExtensions(
+  options: MarketplaceQueryOptions
+): Promise<{ extensions: ExtensionItem[]; total: number }> {
+  const { text = '', pageNumber = 1, pageSize = DEFAULT_PAGE_SIZE, category, sortBy } = options;
+
+  // 构建查询条件
+  const searchText = String(text || '').trim();
+
+  const baseCriteria = (): any[] => {
+    const criteria: any[] = [
+      { filterType: FILTER.TARGET, value: 'Microsoft.VisualStudio.Code' }, // Target filter
+    ];
+    if (searchText) {
+      // 检测 publisher.extension 格式，按扩展 ID 精确搜索。
+      // 注意：ExtensionId(4) 过滤器要求 GUID，不能直接传 ID 字符串；
+      // 实测 SearchText(10) 对完整 ID 可精确命中，再在本地做一次精确过滤兜底。
+      const idMatch = searchText.match(/^([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_-]+)$/);
+      criteria.push({
+        filterType: FILTER.SEARCH_TEXT,
+        value: idMatch ? searchText.toLowerCase() : searchText,
+      });
+    }
+    if (category) {
+      criteria.push({ filterType: FILTER.CATEGORY, value: category }); // Category filter
+    }
+    return criteria;
+  };
+
+  const data = await httpsPost(
+    MARKETPLACE_API_URL,
+    buildRequestBody(baseCriteria(), pageNumber, pageSize, sortBy)
+  );
+
+  let { extensions: rawExtensions, total } = parseResult(data);
+
+  // publisher.extension 精确搜索：本地再过滤一次，只保留完全匹配的扩展
+  const idMatch = searchText.match(/^([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_-]+)$/);
+  if (idMatch && rawExtensions.length > 0) {
+    const exact = rawExtensions.filter(
+      (e) =>
+        (e.publisher?.publisherName + '.' + e.extensionName).toLowerCase() ===
+        searchText.toLowerCase()
+    );
+    if (exact.length > 0) {
+      rawExtensions = exact;
+      total = exact.length;
+    }
+  }
+
+  // 多词或含特殊符号的关键词无结果时，用净化后的关键词重试一次，
+  // 避免特殊字符/多余空格导致全文搜索失效。
+  const isExactId = !!idMatch;
+  if (rawExtensions.length === 0 && searchText && !isExactId) {
+    const sanitized = searchText
+      .replace(/[^\p{L}\p{N}\s._-]/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (sanitized && sanitized !== searchText) {
+      const retryCriteria = [
+        { filterType: FILTER.TARGET, value: 'Microsoft.VisualStudio.Code' },
+        { filterType: FILTER.SEARCH_TEXT, value: sanitized },
+        ...(category ? [{ filterType: FILTER.CATEGORY, value: category }] : []),
+      ];
+      const retryData = await httpsPost(
+        MARKETPLACE_API_URL,
+        buildRequestBody(retryCriteria, pageNumber, pageSize, sortBy)
+      );
+      const retry = parseResult(retryData);
+      rawExtensions = retry.extensions;
+      total = retry.total;
+    }
+  }
 
   const extensions = rawExtensions.map((raw) => rawToExtensionItem(raw));
 

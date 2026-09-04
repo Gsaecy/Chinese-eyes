@@ -1,3 +1,6 @@
+import * as http from 'http';
+import * as tls from 'tls';
+
 export interface TranslationConfig {
   provider: string;
   apiKey?: string;
@@ -11,12 +14,24 @@ interface LLMConfig {
   model: string;
 }
 
+/** 智能翻译结果 */
+export interface TranslateResult {
+  /** 最终译文 */
+  text: string;
+  /** 翻译来源 */
+  source: 'api' | 'free-online' | 'local';
+  /** 降级提示（翻译质量受限时说明原因） */
+  warning?: string;
+}
+
 /**
  * 翻译服务模块
  * 支持 local（内置本地翻译）、DeepL、Google、LibreTranslate、LLM（DeepSeek/OpenAI 兼容）
  */
 export class Translator {
   private cache = new Map<string, string>();
+  private smartCache = new Map<string, TranslateResult>();
+  private freeOnlineFailAt = 0;
   private config: TranslationConfig;
 
   constructor(config: TranslationConfig) {
@@ -25,6 +40,8 @@ export class Translator {
 
   updateConfig(config: TranslationConfig): void {
     this.config = config;
+    this.smartCache.clear();
+    this.freeOnlineFailAt = 0;
   }
 
   /** 批量翻译文本 */
@@ -52,8 +69,11 @@ export class Translator {
     try {
       const translations = await this.callTranslationAPI(toTranslate);
       for (let i = 0; i < toTranslate.length; i++) {
-        const translated = translations[i] || toTranslate[i];
-        this.cache.set(toTranslate[i], translated);
+        const translated = (translations[i] || '').trim() || toTranslate[i];
+        // API 原样返回英文时不要污染缓存（下次会重新尝试翻译）
+        if (translated !== toTranslate[i] || !this.isLLMProvider()) {
+          this.cache.set(toTranslate[i], translated);
+        }
         result[toTranslate[i]] = translated;
       }
     } catch (err) {
@@ -74,36 +94,184 @@ export class Translator {
   }
 
   /**
-   * 翻译一段较长的 Markdown 文本（如 README）。
-   * LLM provider 时直接调用 LLM 输出中文 Markdown；否则回退本地词典。
+   * 智能翻译（供翻译面板/详情页使用）—— 依次尝试：
+   * 1. 已配置的 API 提供商（LLM / DeepL / Google / LibreTranslate）
+   * 2. 免费在线翻译（Google 网页翻译接口，无需 Key，支持代理）
+   * 3. 本地词典兜底，并给出明确提示
+   * @param text 待翻译文本
+   * @param proxyUrl 可选 HTTP 代理（如 http://127.0.0.1:7890），用于免费在线翻译
    */
-  async translateMarkdown(markdown: string): Promise<string> {
-    if (!markdown || !markdown.trim()) return markdown;
-
-    if (!this.isLLMProvider() || !this.config.apiKey) {
-      return localTranslate(markdown);
+  async translateSmart(text: string, proxyUrl?: string): Promise<TranslateResult> {
+    if (!text || !text.trim()) {
+      return { text, source: 'local' };
     }
 
-    const { endpoint, model } = this.resolveLLMConfig();
+    const cached = this.smartCache.get(text);
+    if (cached) {
+      return cached;
+    }
 
-    const systemPrompt = [
-      '你是一个专业的 Markdown 翻译器，把英文 Markdown 文档翻译成简体中文 Markdown。',
-      '规则：',
-      '1. 完整保留原 Markdown 结构（标题、列表、表格、代码块、链接、图片、HTML 标签）',
-      '2. 只翻译自然语言内容，不要翻译代码块、行内代码、命令、URL、品牌名',
-      '3. 保留技术术语（API/SDK/CLI/IDE 等）不翻译',
-      '4. 翻译后直接输出 Markdown，不要包在 ```markdown 代码块里，不要寒暄说明',
-      '5. 如果原文已是中文则原样返回',
-      '6. 对涉及收费的句子（含 paid/pricing/subscription/trial/premium/license/billing 等），在该句末尾追加 ⚠️',
-    ].join('\n');
+    const provider = this.config.provider;
+    const apiProviders = ['deepl', 'google', 'libretranslate', 'deepseek', 'openai-compatible'];
 
-    const out = await this.chatCompletion(endpoint, model, systemPrompt, markdown.substring(0, 16000), 0.1, 6000);
-    if (!out) throw new Error('翻译返回为空');
+    // 1. 已配置 API Key 的提供商
+    if (apiProviders.includes(provider) && this.config.apiKey) {
+      try {
+        const translated = await this.translateViaProviderOne(text);
+        if (isRealTranslation(text, translated)) {
+          const r: TranslateResult = { text: translated, source: 'api' };
+          this.smartCache.set(text, r);
+          return r;
+        }
+        console.warn('[chineseEyes] API 返回内容仍是英文，尝试免费渠道');
+      } catch (err) {
+        console.warn('[chineseEyes] API 翻译失败，尝试免费渠道:', err);
+      }
+    }
+
+    // 2. 免费在线翻译（无需 Key，支持代理）
+    const free = await this.tryFreeOnlineTranslate(text, proxyUrl);
+    if (free) {
+      const r: TranslateResult = { text: free, source: 'free-online' };
+      this.smartCache.set(text, r);
+      return r;
+    }
+
+    // 3. 本地词典兜底 + 明确提示
+    const local = localTranslate(text);
+    let warning: string;
+    if (apiProviders.includes(provider)) {
+      warning = '在线翻译暂时不可用，已使用本地词典（仅翻译常用词汇）。请检查网络后重试。';
+    } else if (isMostlyEnglish(local)) {
+      warning = '本地词典只能翻译常用技术词汇，无法完整翻译这段文本。建议在设置中配置 DeepSeek 或 OpenAI 兼容 API Key 以获得完整翻译。';
+    } else {
+      warning = '已使用本地词典翻译（部分词汇可能不准确），配置 API Key 可获得更准确的翻译。';
+    }
+    const r: TranslateResult = { text: local, source: 'local', warning };
+    this.smartCache.set(text, r);
+    return r;
+  }
+
+  /** 用当前提供商翻译单段文本（失败时抛出异常） */
+  private async translateViaProviderOne(text: string): Promise<string> {
+    const results = await this.callTranslationAPI([text]);
+    const out = (results && results[0]) || text;
+    if (out !== text) {
+      this.cache.set(text, out);
+    }
     return out;
+  }
+
+  /** 免费在线翻译（Google gtx + 有道双通道，均失败返回 null） */
+  private async tryFreeOnlineTranslate(text: string, proxyUrl?: string): Promise<string | null> {
+    // 一分钟内失败过就跳过，避免每次都卡超时
+    if (Date.now() - this.freeOnlineFailAt < 60_000) {
+      return null;
+    }
+    try {
+      const chunks = splitTextForTranslate(text, 900);
+      // 依次尝试各免费通道；每个通道直连与代理并行，谁先成功用谁
+      const providers: FreeProvider[] = ['google', 'youdao'];
+      for (const provider of providers) {
+        const direct = this.freeOnlineViaFetch(chunks, provider);
+        const viaProxy = proxyUrl
+          ? this.freeOnlineViaProxy(chunks, provider, proxyUrl)
+          : Promise.resolve(null);
+        const [directResult, proxyResult] = await Promise.all([direct, viaProxy]);
+        const joined = directResult ?? proxyResult;
+        if (joined && joined.trim() && isRealTranslation(text, joined)) {
+          this.freeOnlineFailAt = 0;
+          return joined;
+        }
+      }
+      this.freeOnlineFailAt = Date.now();
+      return null;
+    } catch (err) {
+      this.freeOnlineFailAt = Date.now();
+      console.warn('[chineseEyes] 免费在线翻译不可用:', err);
+      return null;
+    }
+  }
+
+  /** 直连免费翻译（原生 fetch） */
+  private async freeOnlineViaFetch(chunks: string[], provider: FreeProvider): Promise<string | null> {
+    try {
+      const parts: string[] = [];
+      for (const chunk of chunks) {
+        const req = buildFreeTranslateRequest(provider, chunk);
+        const res = await fetchWithTimeout(
+          req.url,
+          {
+            method: req.method,
+            headers: req.headers,
+            body: req.body,
+          },
+          6000
+        );
+        const raw = await res.text();
+        parts.push(parseFreeTranslateResult(provider, raw));
+      }
+      return parts.join('');
+    } catch (err) {
+      console.warn('[chineseEyes] 免费翻译直连失败(' + provider + '):', err);
+      return null;
+    }
+  }
+
+  /** 通过 HTTP CONNECT 代理免费翻译（适配 Clash 等本地代理） */
+  private async freeOnlineViaProxy(
+    chunks: string[],
+    provider: FreeProvider,
+    proxyUrl: string
+  ): Promise<string | null> {
+    try {
+      const parts: string[] = [];
+      for (const chunk of chunks) {
+        const req = buildFreeTranslateRequest(provider, chunk);
+        const raw = await httpsViaProxy(req.url, proxyUrl, req.method, req.headers, req.body, 8000);
+        parts.push(parseFreeTranslateResult(provider, raw));
+      }
+      return parts.join('');
+    } catch (err) {
+      console.warn('[chineseEyes] 免费翻译代理通道失败(' + provider + '):', err);
+      return null;
+    }
+  }
+
+  /**
+   * 翻译一段较长的 Markdown 文本（如 README）。
+   * LLM provider 时直接调用 LLM 输出中文 Markdown；否则走智能翻译（免费在线/本地词典）。
+   */
+  async translateMarkdown(markdown: string, proxyUrl?: string): Promise<{ text: string; warning?: string }> {
+    if (!markdown || !markdown.trim()) return { text: markdown };
+
+    if (this.isLLMProvider() && this.config.apiKey) {
+      const { endpoint, model } = this.resolveLLMConfig();
+
+      const systemPrompt = [
+        '你是一个专业的 Markdown 翻译器，把英文 Markdown 文档翻译成简体中文 Markdown。',
+        '规则：',
+        '1. 完整保留原 Markdown 结构（标题、列表、表格、代码块、链接、图片、HTML 标签）',
+        '2. 只翻译自然语言内容，不要翻译代码块、行内代码、命令、URL、品牌名',
+        '3. 保留技术术语（API/SDK/CLI/IDE 等）不翻译',
+        '4. 翻译后直接输出 Markdown，不要包在 ```markdown 代码块里，不要寒暄说明',
+        '5. 如果原文已是中文则原样返回',
+        '6. 对涉及收费的句子（含 paid/pricing/subscription/trial/premium/license/billing 等），在该句末尾追加 ⚠️',
+      ].join('\n');
+
+      const out = await this.chatCompletion(endpoint, model, systemPrompt, markdown.substring(0, 16000), 0.1, 6000);
+      if (!out) throw new Error('翻译返回为空');
+      return { text: out };
+    }
+
+    // 非 LLM：智能翻译（免费在线 / 本地词典）
+    const res = await this.translateSmart(markdown, proxyUrl);
+    return { text: res.text, warning: res.warning };
   }
 
   clearCache(): void {
     this.cache.clear();
+    this.smartCache.clear();
   }
 
   /** 是否支持 AI 总结 */
@@ -322,12 +490,12 @@ export class Translator {
     const endpoint = (this.config.customEndpoint || defaultEndpoint).replace(/\/+$/, '');
     const model = this.config.customModel || defaultModel;
 
-    const toTranslate = texts.join('\n<<<SEP>>>\n');
+    const SEP = '<<<SEP>>>';
     const systemPrompt = [
       '你是一个专业的英语到简体中文翻译器。',
       '规则：',
       '1. 只输出翻译结果，不要解释、不要前缀、不要额外文字',
-      '2. 每条翻译结果之间用 <<<SEP>>> 分隔，保持顺序',
+      '2. 每条翻译结果之间用 <<<SEP>>> 分隔，保持顺序，不得合并或省略任何一条',
       '3. 保留技术术语（API, SDK, CLI 等）不翻译',
       '4. 保留品牌名不翻译（React, Vue, VS Code 等）',
       '5. 保留代码片段不翻译',
@@ -335,8 +503,43 @@ export class Translator {
       '7. 对收费关键词（paid, pricing, subscription 等）在译文末尾附加 ⚠️[付费]',
     ].join('\n');
 
-    const out = await this.chatCompletion(endpoint, model, systemPrompt, toTranslate, 0.1, 4096, 15000);
-    return out.split('<<<SEP>>>').map((t: string) => t.trim());
+    // 分批翻译：每批总长度不超过 2400 字符，避免输出被截断导致条数错位
+    const batches: string[][] = [];
+    let cur: string[] = [];
+    let len = 0;
+    for (const t of texts) {
+      if (cur.length > 0 && len + t.length + SEP.length > 2400) {
+        batches.push(cur);
+        cur = [];
+        len = 0;
+      }
+      cur.push(t);
+      len += t.length + SEP.length;
+    }
+    if (cur.length > 0) batches.push(cur);
+
+    const results: string[] = [];
+    for (const batch of batches) {
+      const joined = batch.join('\n' + SEP + '\n');
+      let out = await this.chatCompletion(endpoint, model, systemPrompt, joined, 0.1, 4096, 30000);
+      let parts = out.split(SEP).map((s: string) => s.trim());
+
+      // 条数不匹配：重试一次，明确要求按分隔符逐条输出
+      if (parts.length !== batch.length) {
+        const retryPrompt =
+          systemPrompt +
+          '\n重要：本次必须逐条输出 ' + batch.length +
+          ' 条翻译结果，条与条之间用 ' + SEP + ' 分隔，不要合并、不要省略、不要添加额外说明。';
+        out = await this.chatCompletion(endpoint, model, retryPrompt, joined, 0.1, 4096, 30000);
+        parts = out.split(SEP).map((s: string) => s.trim());
+      }
+
+      // 对齐数量：少了用原文补齐，多了截断
+      for (let i = 0; i < batch.length; i++) {
+        results.push(parts[i] || batch[i]);
+      }
+    }
+    return results;
   }
 }
 
@@ -630,6 +833,234 @@ const DICT: Record<string, string> = {
   'demo': '演示版',
   'registration': '注册',
   'activation': '激活',
+
+  // ===== 常用词汇扩展（本地词典兜底翻译质量增强）=====
+  'and': '和',
+  'with': '与',
+  'from': '来自',
+  'about': '关于',
+  'using': '使用',
+  'use': '使用',
+  'used': '已使用',
+  'your': '你的',
+  'more': '更多',
+  'new': '新的',
+  'data': '数据',
+  'code': '代码',
+  'language': '语言',
+  'languages': '语言',
+  'support': '支持',
+  'supports': '支持',
+  'supported': '支持',
+  'feature': '功能',
+  'features': '功能',
+  'functionality': '功能',
+  'work': '工作',
+  'works': '运行',
+  'run': '运行',
+  'running': '运行中',
+  'write': '编写',
+  'read': '阅读',
+  'help': '帮助',
+  'page': '页面',
+  'create': '创建',
+  'created': '已创建',
+  'make': '制作',
+  'makes': '使',
+  'need': '需要',
+  'needs': '需要',
+  'provide': '提供',
+  'provides': '提供',
+  'include': '包括',
+  'includes': '包括',
+  'allow': '允许',
+  'allows': '允许',
+  'enable': '启用',
+  'enables': '启用',
+  'enabled': '已启用',
+  'disable': '禁用',
+  'disabled': '已禁用',
+  'show': '显示',
+  'shows': '显示',
+  'display': '显示',
+  'menu': '菜单',
+  'button': '按钮',
+  'click': '点击',
+  'choose': '选择',
+  'option': '选项',
+  'options': '选项',
+  'style': '样式',
+  'styles': '样式',
+  'font': '字体',
+  'fonts': '字体',
+  'size': '大小',
+  'small': '小型',
+  'large': '大型',
+  'dark': '深色',
+  'light': '浅色',
+  'background': '背景',
+  'foreground': '前景',
+  'sidebar': '侧边栏',
+  'panel': '面板',
+  'window': '窗口',
+  'tab': '标签页',
+  'tabs': '标签页',
+  'section': '区块',
+  'content': '内容',
+  'document': '文档',
+  'documentation': '文档',
+  'docs': '文档',
+  'readme': 'README',
+  'example': '示例',
+  'examples': '示例',
+  'description': '描述',
+  'default': '默认',
+  'value': '值',
+  'values': '值',
+  'type': '类型',
+  'types': '类型',
+  'key': '按键',
+  'keys': '按键',
+  'based': '基于',
+  'quick': '快速',
+  'quickly': '快速地',
+  'easy': '简单',
+  'easily': '轻松地',
+  'simply': '只需',
+  'popular': '流行',
+  'best': '最佳',
+  'better': '更好',
+  'latest': '最新',
+  'advanced': '高级',
+  'intelligent': '智能的',
+  'quality': '高质量',
+  'open-source': '开源',
+  'available': '可用',
+  'required': '必需',
+  'optional': '可选',
+  'recommended': '推荐',
+  'platform': '平台',
+  'windows': 'Windows',
+  'macos': 'macOS',
+  'linux': 'Linux',
+  'vscode': 'VS Code',
+  'marketplace': '扩展市场',
+  'publisher': '发布者',
+  'release': '发布',
+  'releases': '发布版本',
+  'stable': '稳定版',
+  'beta': '测试版',
+  'alpha': '内测版',
+  'productivity': '工作效率',
+  'development': '开发',
+  'developer': '开发者',
+  'developers': '开发者',
+  'efficiently': '高效地',
+  'automatically': '自动地',
+  'settings': '设置',
+  'keybindings': '按键绑定',
+  'commands': '命令',
+  'shortcuts': '快捷键',
+  'tools': '工具',
+  'utilities': '实用工具',
+  'libraries': '代码库',
+  'packages': '软件包',
+  'dependencies': '依赖',
+  'system': '系统',
+  'shell': '命令行',
+  'online': '在线',
+  'offline': '离线',
+  'database': '数据库',
+  'security': '安全',
+  'privacy': '隐私',
+  'encryption': '加密',
+  'password': '密码',
+  'authentication': '身份验证',
+  'authorization': '授权',
+  'login': '登录',
+  'account': '账户',
+  'user': '用户',
+  'users': '用户',
+  'team': '团队',
+  'teams': '团队',
+  'collaboration': '协作',
+  'sharing': '分享',
+  'share': '分享',
+  'shared': '共享',
+  'synchronization': '同步',
+  'backup': '备份',
+  'restore': '恢复',
+  'history': '历史记录',
+  'recent': '最近',
+  'favorite': '收藏',
+  'favorites': '收藏',
+  'loading': '加载中',
+  'saving': '保存中',
+  'saved': '已保存',
+  'errors': '错误',
+  'warnings': '警告',
+  'success': '成功',
+  'failed': '失败',
+  'failure': '失败',
+  'message': '消息',
+  'messages': '消息',
+  'dialog': '对话框',
+  'prompt': '提示',
+  'real-time': '实时',
+  'realtime': '实时',
+  'multi-platform': '多平台',
+  'integration': '集成',
+  'integrations': '集成',
+  'safe': '安全',
+  'performant': '高性能',
+  'optimized': '已优化',
+  'customize': '定制',
+  'installer': '安装程序',
+  'installed': '已安装',
+  'active': '激活',
+  'inactive': '未激活',
+  'detect': '检测',
+  'detection': '检测',
+  'analyze': '分析',
+  'analysis': '分析',
+  'visualize': '可视化',
+  'generate': '生成',
+  'generated': '生成',
+  'refactor': '重构',
+  'refactoring': '重构',
+  'response': '响应',
+  'request': '请求',
+  'network': '网络',
+  'connection': '连接',
+  'cache': '缓存',
+  'memory': '内存',
+  'storage': '存储',
+  'environment': '环境',
+  'context': '上下文',
+  'suggestion': '建议',
+  'suggestions': '建议',
+  'predict': '预测',
+  'translate': '翻译',
+  'translation': '翻译',
+  'dictionary': '词典',
+  'price': '价格',
+  'cost': '费用',
+  'tutorial': '教程',
+  'guide': '指南',
+  'how to': '如何',
+  'setup': '配置',
+  'configure': '配置',
+  'usage': '用法',
+  'FAQ': '常见问题',
+  'changelog': '更新日志',
+  'issue': '问题',
+  'issues': '问题',
+  'feedback': '反馈',
+  'report': '报告',
+  'community': '社区',
+  'contribute': '贡献',
+  'contributing': '贡献指南',
+  'donate': '捐赠',
 };
 
 // 模块加载时预排序：长词优先 → 每次 localTranslate 不再排序，O(1) 开销
@@ -643,6 +1074,112 @@ const PAID_KEYS = new Set([
   'premium', 'enterprise', 'limited', 'restrictions',
   'watermark', 'ads', 'commercial',
 ]);
+
+/** 统计中文字符占比（0~1） */
+function chineseRatio(text: string): number {
+  let ch = 0;
+  let total = 0;
+  for (const c of text) {
+    if (c.trim() === '') continue;
+    total++;
+    const code = c.charCodeAt(0);
+    if (code >= 0x4e00 && code <= 0x9fff) ch++;
+  }
+  return total === 0 ? 0 : ch / total;
+}
+
+/** 判断译文是否为「真的翻译了」（原文英文 → 译文含中文） */
+function isRealTranslation(original: string, translated: string): boolean {
+  if (!translated || !translated.trim()) return false;
+  // 原文已含较多中文：视为无需翻译，直接认可
+  if (chineseRatio(original) > 0.3) return true;
+  return chineseRatio(translated) > 0.15;
+}
+
+/** 判断文本是否仍以英文为主（用于提示本地词典翻译不完整） */
+function isMostlyEnglish(text: string): boolean {
+  let en = 0;
+  let total = 0;
+  for (const c of text) {
+    if (c.trim() === '') continue;
+    total++;
+    const code = c.charCodeAt(0);
+    if ((code >= 65 && code <= 90) || (code >= 97 && code <= 122)) en++;
+  }
+  return total === 0 ? false : en / total > 0.4;
+}
+
+/** 按句子边界切分长文本，避免免费接口 URL 超长 */
+function splitTextForTranslate(text: string, max = 1400): string[] {
+  if (text.length <= max) return [text];
+  const parts: string[] = [];
+  const sentences = text.split(/(?<=[.!?。！？\n])\s*/);
+  let cur = '';
+  for (const s of sentences) {
+    if (cur && cur.length + s.length > max) {
+      parts.push(cur);
+      cur = s;
+    } else {
+      cur += s;
+    }
+  }
+  if (cur) parts.push(cur);
+  return parts.length > 0 ? parts : [text];
+}
+
+/** 免费在线翻译通道 */
+type FreeProvider = 'google' | 'youdao';
+
+interface FreeRequest {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body?: string;
+}
+
+/** 构建免费翻译接口请求 */
+function buildFreeTranslateRequest(provider: FreeProvider, chunk: string): FreeRequest {
+  if (provider === 'google') {
+    return {
+      url:
+        'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=zh-CN&dt=t&q=' +
+        encodeURIComponent(chunk),
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    };
+  }
+  // 有道翻译 demo 接口（国内可直连，无需 Key）
+  return {
+    url: 'https://aidemo.youdao.com/trans',
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Referer': 'https://fanyi.youdao.com/',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+    },
+    body: 'q=' + encodeURIComponent(chunk) + '&from=auto&to=zh-CHS',
+  };
+}
+
+/** 解析免费翻译接口响应，失败抛出异常 */
+function parseFreeTranslateResult(provider: FreeProvider, raw: string): string {
+  // 容忍响应尾部多余数据（取第一个完整 JSON 对象）
+  const trimmed = raw.trim();
+  const end = trimmed.lastIndexOf('}');
+  const jsonText = end >= 0 ? trimmed.slice(0, end + 1) : trimmed;
+  const data = JSON.parse(jsonText);
+  if (provider === 'google') {
+    const segs = (data?.[0] || []).map((s: any) => (s && s[0]) || '').join('');
+    if (!segs) throw new Error('Google 返回为空');
+    return segs;
+  }
+  if (Number(data.errorCode) !== 0) {
+    throw new Error('有道 errorCode=' + data.errorCode);
+  }
+  const segs = ((data.translation || [])[0] || '').toString();
+  if (!segs) throw new Error('有道返回为空');
+  return segs;
+}
 
 function localTranslate(text: string): string {
   if (!text || !text.trim()) return text;
@@ -694,6 +1231,24 @@ function escapeRegExp(str: string): string {
 //  HTTP 辅助 —— 用 Node 18+ 原生 fetch 替代手写 httpRequest
 // ============================================================
 
+/**
+ * 简易 chunked 编码解码器（代理通道响应可能为分块传输）
+ */
+function decodeChunkedBody(body: string): string {
+  let out = '';
+  let i = 0;
+  while (i < body.length) {
+    const lineEnd = body.indexOf('\r\n', i);
+    if (lineEnd < 0) break;
+    const sizeStr = body.slice(i, lineEnd).split(';')[0].trim();
+    const size = parseInt(sizeStr, 16);
+    if (!size) break;
+    out += body.slice(lineEnd + 2, lineEnd + 2 + size);
+    i = lineEnd + 2 + size + 2; // 跳过数据后的 CRLF
+  }
+  return out;
+}
+
 async function fetchWithTimeout(
   url: string,
   init: RequestInit,
@@ -716,4 +1271,100 @@ async function fetchWithTimeout(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * 通过 HTTP CONNECT 代理发送 HTTPS 请求并返回响应体文本。
+ * 用于免费在线翻译的代理通道（适配 Clash / 各类本地 HTTP 代理）。
+ */
+function httpsViaProxy(
+  targetUrl: string,
+  proxyUrl: string,
+  method: string,
+  headers: Record<string, string>,
+  body?: string,
+  timeoutMs: number = 8000
+): Promise<string> {
+  let target: URL;
+  let proxy: URL;
+  try {
+    target = new URL(targetUrl);
+    proxy = new URL(proxyUrl);
+  } catch {
+    return Promise.reject(new Error('代理地址格式错误: ' + proxyUrl));
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      fn();
+    };
+
+    const proxyReq = http.request({
+      hostname: proxy.hostname,
+      port: parseInt(proxy.port, 10) || (proxy.protocol === 'https:' ? 443 : 8080),
+      method: 'CONNECT',
+      path: `${target.hostname}:${target.port || 443}`,
+      timeout: timeoutMs,
+      headers: proxy.username
+        ? { 'Proxy-Authorization': 'Basic ' + Buffer.from(decodeURIComponent(proxy.username) + ':' + decodeURIComponent(proxy.password)).toString('base64') }
+        : {},
+    });
+
+    proxyReq.on('connect', (_res, socket) => {
+      const tlsSocket = tls.connect(
+        { socket, servername: target.hostname, rejectUnauthorized: true },
+        () => {
+          const reqHeaders: Record<string, string> = {
+            Host: target.hostname,
+            Accept: 'application/json',
+            Connection: 'close',
+            ...headers,
+          };
+          if (body) {
+            reqHeaders['Content-Length'] = String(Buffer.byteLength(body));
+          }
+          const headLines = Object.entries(reqHeaders)
+            .map(([k, v]) => `${k}: ${v}`)
+            .join('\r\n');
+          tlsSocket.write(
+            `${method} ${target.pathname}${target.search} HTTP/1.1\r\n${headLines}\r\n\r\n` +
+              (body || '')
+          );
+        }
+      );
+      const chunks: Buffer[] = [];
+      tlsSocket.on('data', (d: Buffer) => chunks.push(d));
+      tlsSocket.on('end', () => {
+        const all = Buffer.concat(chunks).toString('utf-8');
+        const idx = all.indexOf('\r\n\r\n');
+        if (idx < 0) {
+          finish(() => reject(new Error('代理响应格式错误')));
+          return;
+        }
+        const headerBlock = all.slice(0, idx);
+        let resBody = all.slice(idx + 4);
+        const statusMatch = headerBlock.match(/^HTTP\/\d\.\d (\d+)/);
+        if (statusMatch && statusMatch[1] !== '200') {
+          finish(() => reject(new Error('代理请求失败: HTTP ' + statusMatch[1])));
+          return;
+        }
+        // 处理 Transfer-Encoding: chunked
+        if (/transfer-encoding:\s*chunked/i.test(headerBlock)) {
+          resBody = decodeChunkedBody(resBody);
+        }
+        finish(() => resolve(resBody));
+      });
+      tlsSocket.on('error', (err) => finish(() => reject(err)));
+    });
+
+    proxyReq.on('timeout', () => {
+      finish(() => reject(new Error(`代理连接超时 (${timeoutMs}ms)`)));
+      proxyReq.destroy();
+    });
+    proxyReq.on('error', (err) => finish(() => reject(err)));
+    proxyReq.end();
+  });
 }

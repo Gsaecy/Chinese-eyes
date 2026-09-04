@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { Translator } from './translator';
+import { icon } from './icons';
 
 /**
  * 独立翻译面板（在主编辑区 webview panel）
@@ -78,8 +79,13 @@ export class TranslatorPanel {
           }
           this.post({ type: 'translating' });
           try {
-            const result = await this._translator.translate(text);
-            this.post({ type: 'translateDone', translated: result });
+            const res = await this._translator.translateSmart(text, this.getProxyUrl());
+            this.post({
+              type: 'translateDone',
+              translated: res.text,
+              warning: res.warning,
+              source: res.source,
+            });
           } catch (err: any) {
             this.post({ type: 'translateError', message: err.message || String(err) });
           }
@@ -123,6 +129,15 @@ export class TranslatorPanel {
 
   private post(msg: any): void {
     this._panel.webview.postMessage(msg);
+  }
+
+  /** 优先使用 chineseEyes.proxyUrl，其次 VS Code 内置 http.proxy 设置 */
+  private getProxyUrl(): string {
+    const ch = vscode.workspace.getConfiguration('chineseEyes');
+    const explicit = (ch.get('proxyUrl') as string) || '';
+    if (explicit) return explicit;
+    const httpCfg = vscode.workspace.getConfiguration('http');
+    return (httpCfg.get('proxy') as string) || '';
   }
 
   private buildHtml(webview: vscode.Webview): string {
@@ -169,13 +184,17 @@ h1 .settings:hover{opacity:1}
 .panel textarea{flex:1;min-height:280px;padding:10px;border:1px solid var(--input-border);border-radius:6px;background:var(--input-bg);color:var(--input-fg);font-size:13px;line-height:1.6;resize:vertical;outline:none;font-family:var(--vscode-font-family)}
 .panel textarea:focus{border-color:var(--btn)}
 .panel .output-area{flex:1;min-height:280px;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--card);color:var(--fg);font-size:13px;line-height:1.6;overflow-y:auto;white-space:pre-wrap;word-break:break-word}
+.panel .output-area .source-note{display:block;margin-top:8px;font-size:11px;color:var(--sub)}
 .output-area .empty{color:var(--sub);font-style:italic}
 .actions{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
-.actions button{padding:7px 18px;border:1px solid var(--border);border-radius:4px;background:transparent;color:var(--fg);cursor:pointer;font-size:13px}
+.actions button{padding:7px 14px;border:1px solid var(--border);border-radius:4px;background:transparent;color:var(--fg);cursor:pointer;font-size:13px;display:inline-flex;align-items:center;gap:6px}
 .actions button:hover{background:var(--btn);color:var(--btn-fg);border-color:var(--btn)}
 .actions .primary{background:var(--btn);color:var(--btn-fg);border-color:var(--btn);font-weight:600}
 .actions .primary:hover{background:var(--btn-hover)}
 .actions button:disabled{opacity:.5;cursor:not-allowed}
+.ico{width:14px;height:14px;flex-shrink:0}
+.warn-note{margin-top:8px;padding:8px 12px;background:rgba(201,169,60,.12);border:1px solid var(--warning);border-radius:4px;color:var(--fg);font-size:12px;line-height:1.6;display:flex;gap:6px;align-items:flex-start}
+.warn-note .ico{margin-top:2px}
 .summary-section{margin-top:16px}
 .summary-section h2{font-size:15px;margin-bottom:8px;display:flex;align-items:center;gap:6px}
 .summary-body{padding:12px;background:var(--card);border:1px solid var(--border);border-radius:6px;min-height:60px;font-size:13px;line-height:1.7;white-space:pre-wrap;word-break:break-word}
@@ -194,31 +213,32 @@ h1 .settings:hover{opacity:1}
 <body>
 <div class="container">
   <h1>
-    🌐 翻译助手
-    <span class="settings" id="openSettingsBtn">⚙ 设置</span>
+    ${icon('globe', 18)}<span>翻译助手</span>
+    <span class="settings" id="openSettingsBtn">${icon('settings', 13)} 设置</span>
   </h1>
 
   <div class="actions">
-    <button class="primary" id="translateBtn">🔄 翻译</button>
-    <button id="summarizeBtn">💡 AI 总结</button>
-    <button id="clearBtn">🗑 清空</button>
+    <button class="primary" id="translateBtn">${icon('swap')} 翻译</button>
+    <button id="summarizeBtn">${icon('sparkle')} AI 总结</button>
+    <button id="clearBtn">${icon('trash')} 清空</button>
   </div>
 
   <div class="panels">
     <div class="panel">
-      <div class="panel-label">📥 输入（英文/其他语言）</div>
+      <div class="panel-label">${icon('clipboard', 13)} 输入（英文/其他语言）</div>
       <textarea id="inputArea" placeholder="在此粘贴要翻译的英文内容..."></textarea>
     </div>
     <div class="panel">
-      <div class="panel-label">📤 输出（中文翻译）</div>
+      <div class="panel-label">${icon('upload', 13)} 输出（中文翻译）</div>
       <div class="output-area" id="outputArea">
         <span class="empty">翻译结果将显示在这里</span>
       </div>
+      <div class="warn-note" id="warnNote" style="display:none"></div>
     </div>
   </div>
 
   <div class="summary-section">
-    <h2>💡 AI 总结</h2>
+    <h2>${icon('sparkle')} AI 总结</h2>
     <div class="summary-body" id="summaryBody"></div>
   </div>
 
@@ -228,9 +248,14 @@ h1 .settings:hover{opacity:1}
 <script nonce="${N}">
 const vscode = acquireVsCodeApi();
 const el = (id) => document.getElementById(id);
+// 与扩展侧 icons.ts 一致的简洁线性图标
+const ICON_SWAP = '<svg class="ico" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 7.5h11M10.75 4.75 13.5 7.5l-2.75 2.75"/><path d="M13.5 8.5h-11M5.25 11.25 2.5 8.5l2.75-2.75"/></svg>';
+const ICON_SPARKLE = '<svg class="ico" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.25 9.55 6.45 13.75 8 9.55 9.55 8 13.75 6.45 9.55 2.25 8 6.45 6.45 8 2.25z"/></svg>';
+const ICON_WARNING = '<svg class="ico" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.25 14.5 13.5h-13z"/><path d="M8 6.5v3.25"/><path d="M8 11.75h.01"/></svg>';
 const inputArea = el('inputArea');
 const outputArea = el('outputArea');
 const summaryBody = el('summaryBody');
+const warnNote = el('warnNote');
 const translateBtn = el('translateBtn');
 const summarizeBtn = el('summarizeBtn');
 const clearBtn = el('clearBtn');
@@ -251,6 +276,8 @@ clearBtn.addEventListener('click', () => {
   inputArea.value = '';
   outputArea.innerHTML = '<span class="empty">翻译结果将显示在这里</span>';
   summaryBody.innerHTML = '';
+  warnNote.style.display = 'none';
+  warnNote.innerHTML = '';
 });
 openSettingsBtn.addEventListener('click', () => vscode.postMessage({type:'openSettings'}));
 
@@ -275,7 +302,7 @@ function doTranslate(){
   const text = inputArea.value.trim();
   if (!text) { showToast('请先在输入框中粘贴英文内容', 'error'); return; }
   translateBtn.disabled = true;
-  translateBtn.textContent = '翻译中…';
+  translateBtn.innerHTML = ICON_SWAP + ' 翻译中…';
   outputArea.innerHTML = '<div class="loading-state"><span class="spinner"></span>翻译中…</div>';
   vscode.postMessage({type:'translate', text});
 }
@@ -284,7 +311,7 @@ function doSummarize(){
   const text = inputArea.value.trim();
   if (!text) { showToast('请先在输入框中粘贴需要总结的内容', 'error'); return; }
   summarizeBtn.disabled = true;
-  summarizeBtn.textContent = '生成中…';
+  summarizeBtn.innerHTML = ICON_SPARKLE + ' 生成中…';
   summaryBody.innerHTML = '<div class="loading-state"><span class="spinner"></span>AI 总结生成中…</div>';
   vscode.postMessage({type:'summarize', text});
 }
@@ -294,16 +321,23 @@ window.addEventListener('message', (event) => {
   switch (msg.type){
     case 'translating':
       outputArea.innerHTML = '<div class="loading-state"><span class="spinner"></span>翻译中…</div>';
+      warnNote.style.display = 'none';
       break;
     case 'translateDone':
       translateBtn.disabled = false;
-      translateBtn.textContent = '🔄 翻译';
-      outputArea.innerHTML = esc(msg.translated).replace(/\\n/g, '<br>');
+      translateBtn.innerHTML = ICON_SWAP + ' 翻译';
+      outputArea.innerHTML = esc(msg.translated).replace(/\n/g, '<br>');
+      if (msg.warning) {
+        warnNote.innerHTML = ICON_WARNING + '<span>' + esc(msg.warning) + '</span>';
+        warnNote.style.display = 'flex';
+      } else if (msg.source === 'free-online') {
+        outputArea.innerHTML += '<span class="source-note">（由免费在线翻译提供，配置 API Key 可获得更准确的翻译）</span>';
+      }
       showToast('翻译完成', 'success');
       break;
     case 'translateError':
       translateBtn.disabled = false;
-      translateBtn.textContent = '🔄 翻译';
+      translateBtn.innerHTML = ICON_SWAP + ' 翻译';
       outputArea.innerHTML = '<div class="error-state">' + esc(msg.message) + '</div>';
       break;
     case 'summarizing':
@@ -311,13 +345,13 @@ window.addEventListener('message', (event) => {
       break;
     case 'summarizeDone':
       summarizeBtn.disabled = false;
-      summarizeBtn.textContent = '💡 AI 总结';
-      summaryBody.innerHTML = esc(msg.summary).replace(/\\n/g, '<br>');
+      summarizeBtn.innerHTML = ICON_SPARKLE + ' AI 总结';
+      summaryBody.innerHTML = esc(msg.summary).replace(/\n/g, '<br>');
       showToast('总结生成完成', 'success');
       break;
     case 'summarizeError':
       summarizeBtn.disabled = false;
-      summarizeBtn.textContent = '💡 AI 总结';
+      summarizeBtn.innerHTML = ICON_SPARKLE + ' AI 总结';
       summaryBody.innerHTML = '<div class="error-state">' + esc(msg.message) + '</div>';
       break;
     case 'error':

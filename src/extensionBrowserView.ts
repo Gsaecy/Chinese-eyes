@@ -3,6 +3,7 @@ import { Translator, TranslationConfig } from './translator';
 import { queryExtensions } from './marketplaceApi';
 import { ExtensionItem } from './types';
 import { ExtensionDetailPanel } from './extensionDetailPanel';
+import { icon } from './icons';
 
 /**
  * 侧边栏：扩展列表浏览（搜索 + 卡片）
@@ -213,7 +214,7 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
       if (!config.get('apiKey', '').trim()) {
         this.postMessage({
           type: 'error',
-          message: '请先在「⚙ 设置」中配置 API Key，再进行搜索。',
+          message: '请先在「设置」中配置 API Key，再进行搜索。',
         });
         this._loading = false;
         return;
@@ -303,10 +304,13 @@ body{font-family:var(--vscode-font-family);font-size:13px;color:var(--fg);backgr
 .search-row{display:flex;gap:4px}
 .search-row input{flex:1;padding:6px 8px;border:1px solid var(--input-border);border-radius:4px;background:var(--input-bg);color:var(--input-fg);font-size:12px;outline:none}
 .search-row input:focus{border-color:var(--btn)}
-.search-row button{padding:6px 10px;border:none;border-radius:4px;background:var(--btn);color:var(--btn-fg);cursor:pointer;font-size:12px}
+.search-row button{padding:6px 10px;border:none;border-radius:4px;background:var(--btn);color:var(--btn-fg);cursor:pointer;font-size:12px;display:inline-flex;align-items:center;gap:4px}
 .search-row button:hover{background:var(--btn-hover)}
 .search-row .btn-settings{background:transparent;color:var(--sub);border:1px solid var(--border)}
 .search-row .btn-settings:hover{background:var(--btn);color:var(--btn-fg)}
+.search-row .icon-btn{padding:6px 8px}
+.ico{width:14px;height:14px;flex-shrink:0}
+.bicon{display:inline-flex;align-items:center;gap:4px;justify-content:center}
 .sort-row{display:flex;gap:4px;flex-wrap:wrap;font-size:11px}
 .sort-chip{padding:2px 8px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--sub);cursor:pointer;user-select:none}
 .sort-chip:hover{border-color:var(--btn);color:var(--btn)}
@@ -332,7 +336,7 @@ body{font-family:var(--vscode-font-family);font-size:13px;color:var(--fg);backgr
 .card .badge.paid{background:rgba(201,92,60,.15);color:var(--error)}
 .card .badge.maybe{background:rgba(201,169,60,.15);color:var(--warning)}
 .card .actions{display:flex;gap:4px;margin-top:4px;flex-wrap:wrap}
-.card .actions button{flex:1;min-width:60px;padding:4px 6px;font-size:11px;border:1px solid var(--border);background:transparent;color:var(--fg);border-radius:4px;cursor:pointer}
+.card .actions button{flex:1;min-width:60px;padding:4px 6px;font-size:11px;border:1px solid var(--border);background:transparent;color:var(--fg);border-radius:4px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:4px}
 .card .actions button:hover{background:var(--btn);color:var(--btn-fg);border-color:var(--btn)}
 .card .actions .primary{background:var(--btn);color:var(--btn-fg);border-color:var(--btn)}
 .card .actions .primary:hover{background:var(--btn-hover)}
@@ -367,21 +371,22 @@ body{font-family:var(--vscode-font-family);font-size:13px;color:var(--fg);backgr
 .toast.error{background:var(--error);color:#fff}
 .toast.info{background:var(--btn);color:var(--btn-fg)}
 .welcome-area{display:flex;align-items:center;justify-content:center;height:300px;text-align:center}
-.welcome-content h2{font-size:18px;margin-bottom:10px;color:var(--fg)}
+.welcome-content h2{font-size:18px;margin-bottom:10px;color:var(--fg);display:flex;align-items:center;justify-content:center;gap:6px}
 .welcome-content p{font-size:13px;color:var(--sub);margin-bottom:20px}
-.primary-btn{padding:10px 24px;background:var(--btn);color:var(--btn-fg);border:none;border-radius:6px;cursor:pointer;font-size:14px;font-weight:600}
+.primary-btn{padding:10px 24px;background:var(--btn);color:var(--btn-fg);border:none;border-radius:6px;cursor:pointer;font-size:14px;font-weight:600;display:inline-flex;align-items:center;gap:6px}
 .primary-btn:hover{background:var(--btn-hover)}
+.primary-btn:disabled{opacity:.6;cursor:not-allowed}
 </style>
 </head>
 <body>
 <div class="header">
   <div class="search-row">
     <input id="searchInput" type="text" placeholder="搜索扩展名 / 关键词...">
-    <button id="clearSearchBtn" class="btn-settings" title="清除搜索" style="display:none">✕</button>
-    <button id="searchBtn">搜索</button>
-    <button id="translatorBtn" class="btn-settings" title="打开翻译面板">🌐</button>
-    <button id="settingsBtn" class="btn-settings" title="设置">⚙</button>
-    <button id="closePanelBtn" class="btn-settings" title="关闭侧边栏">✕</button>
+    <button id="clearSearchBtn" class="btn-settings icon-btn" title="清除搜索" style="display:none">${icon('clear')}</button>
+    <button id="searchBtn">${icon('search')}<span>搜索</span></button>
+    <button id="translatorBtn" class="btn-settings icon-btn" title="打开翻译面板">${icon('globe')}</button>
+    <button id="settingsBtn" class="btn-settings icon-btn" title="设置">${icon('settings')}</button>
+    <button id="closePanelBtn" class="btn-settings icon-btn" title="关闭侧边栏">${icon('close')}</button>
   </div>
   <div class="sort-row">
     <span class="sort-chip" data-sort="installCount">热门</span>
@@ -426,7 +431,7 @@ body{font-family:var(--vscode-font-family);font-size:13px;color:var(--fg);backgr
     <button class="open-ui" id="openSettingsBtn">在 VS Code 设置中打开</button>
   </div>
   <div class="help-box">
-    <strong>🔑 推荐配置</strong><br>
+    <strong>${icon('key', 12)} 推荐配置</strong><br>
     1. DeepSeek：注册 <a data-url="https://platform.deepseek.com/">platform.deepseek.com</a> → 创建 API Key<br>
     2. OpenAI 兼容：填入 endpoint（如阿里云 DashScope、Moonshot、Together 等）+ 对应模型名<br>
     3. 仅翻译：DeepL/Google/LibreTranslate 也可使用，但不能 AI 总结
@@ -436,12 +441,12 @@ body{font-family:var(--vscode-font-family);font-size:13px;color:var(--fg);backgr
 <div id="listArea">
   <div class="welcome-area" id="welcomeArea">
     <div class="welcome-content">
-      <h2>👋 欢迎使用扩展选择助手</h2>
+      <h2>${icon('globe', 20)}<span>欢迎使用扩展选择助手</span></h2>
       <p>AI 智能总结 + 翻译，帮助你快速了解 VS Code 扩展</p>
-      <button id="loadExtensionsBtn" class="primary-btn">📦 浏览扩展</button>
+      <button id="loadExtensionsBtn" class="primary-btn">${icon('grid')}<span class="lbl">浏览扩展</span></button>
       <div style="margin-top:16px;font-size:12px;color:var(--sub)">
-        <strong style="color:var(--warning)">⚠️ 首次使用请先配置 API Key</strong><br>
-        点击右上角 ⚙ 设置 → 选择 DeepSeek/OpenAI 兼容 → 填入 Key
+        <strong style="color:var(--warning);display:inline-flex;align-items:center;gap:4px">${icon('warning', 12)} 首次使用请先配置 API Key</strong><br>
+        点击右上角 ${icon('settings', 12)} 设置 → 选择 DeepSeek/OpenAI 兼容 → 填入 Key
       </div>
     </div>
   </div>
@@ -470,6 +475,40 @@ const dotSum = el('dotSum');
 const transStat = el('transStat');
 const sumStat = el('sumStat');
 const sortChips = document.querySelectorAll('.sort-chip');
+
+// 与扩展侧 icons.ts 一致的简洁线性 SVG 图标
+const ICON_GLOBE = '<svg class="ico" viewBox="0 0 16 16" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.25"/><path d="M1.75 8h12.5"/><path d="M8 1.75a9.6 9.6 0 0 1 0 12.5"/></svg>';
+const ICON_GRID = '<svg class="ico" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="5.25" height="5.25" rx="1"/><rect x="8.75" y="2" width="5.25" height="5.25" rx="1"/><rect x="2" y="8.75" width="5.25" height="5.25" rx="1"/><rect x="8.75" y="8.75" width="5.25" height="5.25" rx="1"/></svg>';
+const ICON_SETTINGS = '<svg class="ico" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11"/><circle cx="6.25" cy="4" r="1.6"/><path d="M2.5 8h11"/><circle cx="10" cy="8" r="1.6"/><path d="M2.5 12h11"/><circle cx="6.75" cy="12" r="1.6"/></svg>';
+const ICON_WARNING = '<svg class="ico" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.25 14.5 13.5h-13z"/><path d="M8 6.5v3.25"/><path d="M8 11.75h.01"/></svg>';
+
+function welcomeHtml(){
+  return '<div class="welcome-area">'
+    + '<div class="welcome-content">'
+    + '<h2>' + ICON_GLOBE + '<span>欢迎使用扩展选择助手</span></h2>'
+    + '<p>AI 智能总结 + 翻译，帮助你快速了解 VS Code 扩展</p>'
+    + '<button id="loadExtensionsBtn" class="primary-btn">' + ICON_GRID + '<span class="lbl">浏览扩展</span></button>'
+    + '<div style="margin-top:16px;font-size:12px;color:var(--sub)">'
+    + '<strong style="color:var(--warning);display:inline-flex;align-items:center;gap:4px">' + ICON_WARNING + ' 首次使用请先配置 API Key</strong><br>'
+    + '点击右上角 ' + ICON_SETTINGS + ' 设置 → 选择 DeepSeek/OpenAI 兼容 → 填入 Key'
+    + '</div></div></div>';
+}
+
+function renderWelcome(){
+  listArea.innerHTML = welcomeHtml();
+  bindLoadBtn();
+}
+
+function bindLoadBtn(){
+  const btn = document.getElementById('loadExtensionsBtn');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    btn.disabled = true;
+    const lbl = btn.querySelector('.lbl');
+    if (lbl) lbl.textContent = '加载中…';
+    vscode.postMessage({type:'search', query: ''});
+  });
+}
 
 let state = {
   provider: 'local',
@@ -542,14 +581,14 @@ function renderList(){
         + (item.description ? '<div class="desc">' + esc(item.description) + '</div>' : '')
         + '<div class="meta">'
           + badge
-          + '<span>⬇ ' + fmtCount(item.installCount) + '</span>'
-          + (item.ratingScore ? '<span>★ ' + item.ratingScore.toFixed(1) + '（' + fmtCount(item.ratingCount) + '）</span>' : '')
+          + '<span class="bicon">${icon('download', 11)}' + fmtCount(item.installCount) + '</span>'
+          + (item.ratingScore ? '<span class="bicon">${icon('star', 11)}' + item.ratingScore.toFixed(1) + '（' + fmtCount(item.ratingCount) + '）</span>' : '')
         + '</div>'
         + '<div class="actions">'
-          + '<button class="primary" data-act="detail">详情</button>'
-          + '<button class="summary" data-act="summary">AI 总结</button>'
-          + '<button data-act="install" title="在 VS Code 中安装">安装</button>'
-          + '<button data-act="open" title="在编辑器打开扩展页">↗</button>'
+          + '<button class="primary" data-act="detail">${icon('doc', 12)}<span>详情</span></button>'
+          + '<button class="summary" data-act="summary">${icon('sparkle', 12)}<span>AI 总结</span></button>'
+          + '<button data-act="install" title="在 VS Code 中安装">${icon('install', 12)}<span>安装</span></button>'
+          + '<button data-act="open" title="在编辑器打开扩展页">${icon('external', 12)}</button>'
         + '</div>'
       + '</div>'
       + '</div>'
@@ -628,7 +667,8 @@ const loadExtensionsBtn = el('loadExtensionsBtn');
 if (loadExtensionsBtn) {
   loadExtensionsBtn.addEventListener('click', () => {
     loadExtensionsBtn.disabled = true;
-    loadExtensionsBtn.textContent = '加载中…';
+    const lbl = loadExtensionsBtn.querySelector('.lbl');
+    if (lbl) lbl.textContent = '加载中…';
     vscode.postMessage({type:'search', query: ''});
   });
 }
@@ -639,7 +679,7 @@ if (closePanelBtn) {
   closePanelBtn.addEventListener('click', () => vscode.postMessage({ type: 'closePanel' }));
 }
 
-/* ---- 🌐 翻译面板 ---- */
+/* ---- 翻译面板 ---- */
 const translatorBtn = el('translatorBtn');
 if (translatorBtn) {
   translatorBtn.addEventListener('click', () => vscode.postMessage({ type: 'openTranslator' }));
@@ -688,11 +728,12 @@ window.addEventListener('message', (event) => {
       sortChips.forEach((c) => c.classList.toggle('active', c.getAttribute('data-sort') === state.sortBy));
       break;
     case 'welcome':
-      // 显示欢迎页，搜索按钮被禁用状态
-      if (loadExtensionsBtn) {
-        loadExtensionsBtn.disabled = false;
-        loadExtensionsBtn.textContent = '📦 浏览扩展';
-      }
+      // 显示欢迎页（初始状态 / 清除搜索后）
+      state.loading = false;
+      state.items = [];
+      state.hasMore = false;
+      state.descMap = {};
+      renderWelcome();
       break;
     case 'loading':
       state.loading = true;
@@ -735,15 +776,7 @@ window.addEventListener('message', (event) => {
       showToast(msg.message, 'error');
       // 搜索失败后恢复欢迎页，让用户可以重试
       if (state.items.length === 0) {
-        listArea.innerHTML = '<div class="welcome-area"><div class="welcome-content"><h2>👋 欢迎使用扩展选择助手</h2><p>AI 智能总结 + 翻译，帮助你快速了解 VS Code 扩展</p><button id="loadExtensionsBtn" class="primary-btn">📦 浏览扩展</button><div style="margin-top:16px;font-size:12px;color:var(--sub)"><strong style="color:var(--warning)">⚠️ 首次使用请先配置 API Key</strong><br>点击右上角 ⚙ 设置 → 选择 DeepSeek/OpenAI 兼容 → 填入 Key</div></div></div>';
-        const newLoadBtn = document.getElementById('loadExtensionsBtn');
-        if (newLoadBtn) {
-          newLoadBtn.addEventListener('click', () => {
-            newLoadBtn.disabled = true;
-            newLoadBtn.textContent = '加载中…';
-            vscode.postMessage({type:'search', query: ''});
-          });
-        }
+        renderWelcome();
       }
       break;
 
