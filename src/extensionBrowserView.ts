@@ -1209,6 +1209,8 @@ if (applyKeyBtn) {
 /** 设置面板展开/收起（保留顶部工具栏，可随时点主页返回） */
 function setSettingsPageVisible(show){
   settingsArea.classList.toggle('show', show);
+  // 设置页展开时隐藏下方主页/列表内容，只显示设置面板；关闭后恢复
+  if (listArea) listArea.style.display = show ? 'none' : '';
 }
 
 settingsBtn.addEventListener('click', () => {
