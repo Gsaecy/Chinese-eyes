@@ -541,9 +541,9 @@ body{padding:12px;font-size:13px}
   </div>
   <div class="help-box">
     <strong>${icon('key', 12)} 推荐配置</strong><br>
-    1. 在「Agent 预设」选一个（如 DeepSeek / 阿里云 / Kimi）→ 地址和模型自动填好<br>
-    2. 只填 API Key → 点保存，即可翻译 + AI 总结<br>
-    3. 不填 Key 也能用：免费在线翻译（有道/Google）自动生效
+    1. 在「Agent 供应商」选品牌（如 DeepSeek / 阿里云 / Kimi）→ 地址和模型自动填好<br>
+    2. 只填 API Key → 点「应用」或「保存」，即可翻译 + AI 总结<br>
+    3. 不填 Key 也能用：免费在线翻译（有道/Google）自动生效；AI 总结需配置 Key
   </div>
 </div>
 
