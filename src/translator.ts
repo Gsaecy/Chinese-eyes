@@ -424,7 +424,7 @@ export class Translator {
       '6. 对涉及收费的句子（含 paid/pricing/subscription/trial/premium/license/billing 等），在该句末尾追加 ⚠️',
     ].join('\n');
 
-    const chunks = splitMarkdownForLLM(markdown, 6000);
+    const chunks = splitMarkdownForLLM(markdown, 4000);
     const parts: string[] = [];
     for (const chunk of chunks) {
       // 几乎纯中文的块才原样保留；混排块交给 LLM（规则：中文保留、只译英文）
@@ -432,7 +432,8 @@ export class Translator {
         parts.push(chunk);
         continue;
       }
-      const out = await this.chatCompletion(endpoint, model, systemPrompt, chunk, 0.1, 4096, 60000);
+      // max_tokens 留足余量（中译输出约等于输入长度），避免截断触发思考泄漏
+      const out = await this.chatCompletion(endpoint, model, systemPrompt, chunk, 0.1, 6000, 90000);
       if (!out) throw new Error('模型返回空内容');
       parts.push(out);
     }
@@ -477,7 +478,7 @@ export class Translator {
       '- 不要前置寒暄，开头就是 ## 标题',
     ].join('\n');
 
-    const text = await this.chatCompletion(endpoint, model, systemPrompt, content.substring(0, 12000), 0.2, 1200);
+    const text = await this.chatCompletion(endpoint, model, systemPrompt, content.substring(0, 12000), 0.2, 2500);
     if (!text) throw new Error('AI 返回为空');
     return text;
   }
@@ -505,7 +506,7 @@ export class Translator {
       '- Do not start with pleasantries, start directly with ## heading',
     ].join('\n');
 
-    const text = await this.chatCompletion(endpoint, model, systemPrompt, content.substring(0, 12000), 0.2, 1200);
+    const text = await this.chatCompletion(endpoint, model, systemPrompt, content.substring(0, 12000), 0.2, 2500);
     if (!text) throw new Error('AI 返回为空');
     return text;
   }
@@ -550,6 +551,8 @@ export class Translator {
       ],
       temperature,
       max_tokens: maxTokens,
+      // 关闭思考模式（DeepSeek 官方参数）：从源头杜绝思维链泄漏进 content
+      thinking: { type: 'disabled' },
     });
 
     const call = async (extra?: string) => {
@@ -567,7 +570,7 @@ export class Translator {
       );
       const result = await response.json() as {
         error?: { message?: string };
-        choices?: Array<{ message?: { content?: string; reasoning_content?: string }; text?: string }>;
+        choices?: Array<{ message?: { content?: string; reasoning_content?: string }; text?: string; finish_reason?: string }>;
         output_text?: string;
       };
       if (result.error) {
@@ -577,6 +580,7 @@ export class Translator {
       return {
         content: first?.message?.content ?? first?.text ?? result.output_text,
         reasoning: first?.message?.reasoning_content,
+        finishReason: first?.finish_reason,
       };
     };
 
@@ -589,16 +593,22 @@ export class Translator {
         console.warn('[chineseEyes] reasoning 模型重试失败:', e);
       }
     }
-    if (!out.content && out.reasoning) {
-      // 兜底：模型始终只给思考过程，用其内容避免完全失败
-      console.warn('[chineseEyes] reasoning 模型仅返回思考过程，使用其内容兜底');
-      return String(out.reasoning).trim();
-    }
     if (!out.content) {
       console.warn('[chineseEyes] LLM 返回空内容，原始响应:', JSON.stringify(out).slice(0, 500));
       return '';
     }
-    return stripThinkingOutput(String(out.content));
+    // 沙盒质检：清洗思考标签/寒暄/代码块壳后，若因 max_tokens 截断导致内容无中文（思考泄漏特征），重试一次
+    let cleaned = stripThinkingOutput(String(out.content));
+    if (out.finishReason === 'length' && cleaned && chineseRatio(cleaned) < 0.05) {
+      try {
+        const retry = await call('【强制】只输出译文本身，不要任何思考、说明或代码块包裹。');
+        const retryCleaned = stripThinkingOutput(String(retry.content || ''));
+        if (retryCleaned) cleaned = retryCleaned;
+      } catch (e) {
+        console.warn('[chineseEyes] 截断重试失败:', e);
+      }
+    }
+    return cleaned;
   }
 
   private async callTranslationAPI(texts: string[]): Promise<string[]> {
@@ -1432,8 +1442,8 @@ function unmaskImages(text: string, tokens: string[]): string {
 function stripThinkingOutput(text: string): string {
   let t = String(text || '').trim();
   if (!t) return '';
-  // 1. 去掉 <thinking>/<thought>/<analysis>/<reasoning> 等思考标签块
-  t = t.replace(/<\s*(thinking|thought|analysis|reasoning)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '').trim();
+  // 1. 去掉 <think>/<thinking>/<thought>/<analysis>/<reasoning> 等思考标签块（DeepSeek 泄漏用 <think>）
+  t = t.replace(/<\s*(think|thinking|thought|analysis|reasoning)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '').trim();
   // 2. 整段被 ``` 代码块包裹 → 去壳
   if (/^```[\w-]*\s*\n[\s\S]*\n```\s*$/.test(t)) {
     t = t.replace(/^```[\w-]*\s*\n/, '').replace(/\n```\s*$/, '').trim();
