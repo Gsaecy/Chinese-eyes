@@ -493,6 +493,7 @@ body{padding:12px;font-size:13px}
 .help-box strong{color:var(--accent);display:inline-flex;align-items:center;gap:5px;font-weight:700}
 .help-box .help-step{display:flex;gap:7px;margin-top:2px}
 .help-box .help-step .n{color:var(--accent);font-weight:700;flex-shrink:0}
+.ok-bar{margin-top:12px;padding:10px 14px;background:rgba(52,199,89,.1);border:1px solid rgba(52,199,89,.35);border-radius:var(--radius-m);color:#34c759;font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px}
 .home-pro{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--text-sub);flex-wrap:wrap;line-height:1.6}
 </style>
 </head>
@@ -575,6 +576,7 @@ body{padding:12px;font-size:13px}
     <div class="help-step"><span class="n">2</span><span>只填 API Key → 点「应用」或「保存」，即可翻译 + AI 总结</span></div>
     <div class="help-step"><span class="n">3</span><span>不填 Key 也能用：免费在线翻译（有道/Google）自动生效；AI 总结需配置 Key</span></div>
   </div>
+  <div class="ok-bar" id="settingsOkBar" style="display:none">${icon('check', 13)} 设置正常，请尽情使用</div>
 </div>
 
 <div id="listArea"></div>
@@ -596,6 +598,7 @@ const modelSelect = el('modelSelect');
 const detectModelsBtn = el('detectModelsBtn');
 const applyKeyBtn = el('applyKeyBtn');
 const modelStatus = el('modelStatus');
+const okBar = el('settingsOkBar');
 const endpointInput = el('endpointInput');
 const modelInput = el('modelInput');
 const saveSettingsBtn = el('saveSettingsBtn');
@@ -972,6 +975,17 @@ let appliedKey = '';   // 已成功应用/保存的 API Key（trim 后）
 let busyTimer = null;
 let settingsDirty = false; // 设置面板是否有未保存的修改
 let modelsDetectedFor = ''; // 已自动检测过模型的 供应商|地址|Key，避免重复请求
+let modelCheckPassed = false; // 当前模型是否已校验通过（无模型需求时视同通过）
+
+/** 底部「设置正常，请尽情使用」状态条：无配置问题且模型校验通过才显示 */
+function updateOkBar(){
+  if (!okBar) return;
+  const vendor = vendorSelect.value;
+  const isLLM = !!PRESETS[vendor] || vendor === 'custom';
+  const needModel = isLLM && !!modelInput.value.trim();
+  const ok = validateSettings().length === 0 && (!needModel || modelCheckPassed);
+  okBar.style.display = ok ? 'flex' : 'none';
+}
 
 // 模型校验状态图标
 const ICON_WARN_TRI = '<svg class="ico" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="#ff9500" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.25 14.5 13.5h-13z"/><path d="M8 6.5v3.25"/><path d="M8 11.75h.01"/></svg>';
@@ -981,10 +995,12 @@ const ICON_CHECK_GREEN = '<svg class="ico" viewBox="0 0 16 16" width="14" height
 function setModelStatus(kind, text){
   if (!modelStatus) return;
   if (kind === 'bad') {
+    modelCheckPassed = false;
     modelStatus.innerHTML = ICON_WARN_TRI + '<span>无法识别该模型</span>';
     modelStatus.className = 'model-status bad';
     modelStatus.style.display = 'inline-flex';
   } else if (kind === 'good') {
+    modelCheckPassed = true;
     modelStatus.innerHTML = ICON_CHECK_GREEN;
     modelStatus.className = 'model-status good';
     modelStatus.style.display = 'inline-flex';
@@ -996,6 +1012,7 @@ function setModelStatus(kind, text){
     modelStatus.style.display = 'none';
     modelStatus.className = 'model-status';
   }
+  updateOkBar();
 }
 
 function updateApplyBtnState(){
@@ -1047,8 +1064,10 @@ function updateEndpointInputState(){
 
 function markSettingsDirty(){
   settingsDirty = true;
+  modelCheckPassed = false; // 配置可能已变，旧的模型校验结果作废
   updateSaveBtnState();
   setModelStatus('none'); // 修改设置后清空旧校验状态
+  updateOkBar();
 }
 
 function markSettingsClean(){
@@ -1353,8 +1372,13 @@ window.addEventListener('message', (event) => {
         // 模型无效：留在设置页，显示红字标识，方便用户继续修改
         setModelStatus('bad');
         showToast('设置已保存，但模型「' + modelInput.value.trim() + '」无效：' + (msg.modelError || '未知错误') + '。请修改模型后重新保存。', 'error');
+      } else if (msg.modelOk === true) {
+        // 模型有效：显示绿勾，设置面板保持展开
+        setModelStatus('good');
+        showToast('设置已保存', 'success');
       } else {
-        setSettingsPageVisible(false);
+        // 无需模型校验（本地词典/仅翻译供应商）：直接保存，面板保持展开
+        setModelStatus('none');
         showToast('设置已保存', 'success');
       }
       break;
