@@ -343,6 +343,7 @@ body{padding:12px;font-size:13px}
 <body>
 <div class="header">
   <div class="search-row">
+    <button id="homeBtn" class="ap-btn ap-btn-icon" title="返回主页">${icon('home')}</button>
     <input id="searchInput" class="ap-input" type="text" placeholder="搜索扩展名 / 关键词...">
     <button id="clearSearchBtn" class="ap-btn ap-btn-icon" title="清除搜索" style="display:none">${icon('clear')}</button>
     <button id="searchBtn" class="ap-btn ap-btn-primary">${icon('search')}<span>搜索</span></button>
@@ -691,6 +692,17 @@ if (closePanelBtn) {
 const translatorBtn = el('translatorBtn');
 if (translatorBtn) {
   translatorBtn.addEventListener('click', () => vscode.postMessage({ type: 'openTranslator' }));
+}
+
+/* ---- 返回主页 ---- */
+const homeBtn = el('homeBtn');
+if (homeBtn) {
+  homeBtn.addEventListener('click', () => {
+    searchInput.value = '';
+    state.query = '';
+    clearSearchBtn.style.display = 'none';
+    vscode.postMessage({ type: 'clearSearch' });
+  });
 }
 
 /* ---- 清除搜索 ---- */

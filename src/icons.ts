@@ -21,7 +21,8 @@ export type IconName =
   | 'key'
   | 'grid'
   | 'warning'
-  | 'install';
+  | 'install'
+  | 'home';
 
 const PATHS: Record<IconName, string> = {
   search: '<circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/>',
@@ -57,6 +58,8 @@ const PATHS: Record<IconName, string> = {
     '<path d="M8 2.25 14.5 13.5h-13z"/><path d="M8 6.5v3.25"/><path d="M8 11.75h.01"/>',
   install:
     '<path d="M3.5 6.5V11a1.5 1.5 0 0 0 1.5 1.5h6A1.5 1.5 0 0 0 12.5 11V6.5"/><path d="M8 2.5v6.75"/><path d="M5.25 7 8 9.75 10.75 7"/>',
+  home:
+    '<path d="M2.5 7.5 8 2.75l5.5 4.75"/><path d="M4 6.75V13.5h8V6.75"/><path d="M6.5 13.5V9.75h3V13.5"/>',
 };
 
 /**
