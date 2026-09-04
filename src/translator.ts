@@ -366,14 +366,16 @@ export class Translator {
    */
   async translateReadme(text: string, proxyUrl?: string): Promise<{ text: string; warning?: string }> {
     if (!text || !text.trim()) return { text };
+    // 图片语法占位保护：免费翻译会破坏 ![alt](url)，先用占位符替换、译后还原
+    const { masked, tokens } = maskImages(text);
 
     // 1. 短文本免费优先（内部自动跳过超长文本，省 API Token）
-    const free = await this.tryFreeOnlineTranslate(text, proxyUrl);
+    const free = await this.tryFreeOnlineTranslate(masked, proxyUrl);
     if (free && free.trim() && isRealTranslation(text, free)) {
-      return { text: free };
+      return { text: unmaskImages(stripThinkingOutput(free), tokens) };
     }
 
-    // 2. AI 整篇翻译
+    // 2. AI 整篇翻译（提示词要求图片原样保留，直接传原文）
     if (this.isLLMProvider() && this.config.apiKey) {
       const { endpoint, model } = this.resolveLLMConfig();
       try {
@@ -393,14 +395,14 @@ export class Translator {
 
     // 3. 免费兜底再试一次（绕过 60s 冷却，确保 AI 失败时免费能顶上一次）
     this.freeOnlineFailAt = 0;
-    const free2 = await this.tryFreeOnlineTranslate(text, proxyUrl);
+    const free2 = await this.tryFreeOnlineTranslate(masked, proxyUrl);
     if (free2 && free2.trim() && isRealTranslation(text, free2)) {
-      return { text: free2, warning: 'AI 翻译不可用，已使用免费在线翻译' };
+      return { text: unmaskImages(stripThinkingOutput(free2), tokens), warning: 'AI 翻译不可用，已使用免费在线翻译' };
     }
 
-    // 4. 本地词典
+    // 4. 本地词典（图片语法由 mask 保护，原样还原）
     return {
-      text: localTranslate(text),
+      text: unmaskImages(localTranslate(masked), tokens),
       warning: 'AI 与免费翻译均不可用，已使用本地词典（仅翻译常用词汇）。建议在设置中检查 API Key 或网络后重试',
     };
   }
@@ -414,7 +416,7 @@ export class Translator {
     const systemPrompt = [
       '你是一个专业的 Markdown 翻译器，把英文 Markdown 文档翻译成简体中文 Markdown。',
       '规则：',
-      '1. 保持基本段落结构和标题层级；代码块、行内代码、命令、链接、图片、HTML 标签原样保留',
+      '1. 保持基本段落结构和标题层级；代码块、行内代码、命令、链接、图片、HTML 标签原样保留；图片 Markdown 语法 ![...](...) 必须原样输出',
       '2. 只翻译自然语言内容，不要翻译代码块、行内代码、命令、URL、品牌名',
       '3. 保留技术术语（API/SDK/CLI/IDE 等）不翻译',
       '4. 绝对不要输出任何思考过程、推理内容、解释或寒暄，只输出译文本身；不要包在 ```markdown 代码块里',
@@ -1405,6 +1407,25 @@ export function chineseRatio(text: string): number {
     if (code >= 0x4e00 && code <= 0x9fff) ch++;
   }
   return total === 0 ? 0 : ch / total;
+}
+
+/** 图片语法占位保护：把 ![alt](url) 换成占位符，防止免费翻译破坏，译后还原 */
+function maskImages(text: string): { masked: string; tokens: string[] } {
+  const tokens: string[] = [];
+  const masked = text.replace(/!\[[^\]]*\]\([^)]*\)/g, (m) => {
+    tokens.push(m);
+    return '◈IMG' + (tokens.length - 1) + '◈';
+  });
+  return { masked, tokens };
+}
+
+/** 还原图片占位符为原始图片语法 */
+function unmaskImages(text: string, tokens: string[]): string {
+  let t = String(text || '');
+  tokens.forEach((tok, i) => {
+    t = t.split('◈IMG' + i + '◈').join(tok);
+  });
+  return t;
 }
 
 /** 清洗 LLM 输出：去掉思考标签块、常见寒暄前缀、外层代码块壳，只留译文本体 */

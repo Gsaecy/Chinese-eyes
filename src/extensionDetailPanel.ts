@@ -321,7 +321,7 @@ body{font-size:14px;line-height:1.6}
 
   <div class="section readme ap-card" id="readmeSection" style="display:none">
     <div class="section-head">
-      <h2>${icon('doc')} 扩展详情原文</h2>
+      <h2 id="readmeTitle">${icon('doc')} <span id="readmeTitleText">扩展详情原文</span></h2>
       <div class="controls">
         <button id="translateReadmeBtn">翻译</button>
       </div>
@@ -345,6 +345,7 @@ const readmeSection = el('readmeSection');
 const readmeBody = el('readmeBody');
 const translateReadmeBtn = el('translateReadmeBtn');
 const readmeWarn = el('readmeWarn');
+const readmeTitleText = el('readmeTitleText');
 
 let state = {
   item: null,
@@ -500,6 +501,10 @@ function updateReadmeDisplay(){
 
 function setReadmeView(mode){
   state.readmeView = mode;
+  // 标题随视图切换：译文视图显示「扩展详情译文」
+  if (readmeTitleText) {
+    readmeTitleText.textContent = mode === 'translated' ? '扩展详情译文' : '扩展详情原文';
+  }
   updateReadmeDisplay();
 }
 
@@ -558,6 +563,7 @@ window.addEventListener('message', (event) => {
       state.translatedReadme = '';
       state.readmeView = 'original';
       translateReadmeBtn.textContent = '翻译';
+      if (readmeTitleText) readmeTitleText.textContent = '扩展详情原文';
       updateReadmeDisplay();
       break;
     case 'summarizing':
@@ -586,10 +592,9 @@ window.addEventListener('message', (event) => {
       break;
     case 'translateReadmeDone':
       state.translatedReadme = msg.translated || '';
-      state.readmeView = 'translated';
+      setReadmeView('translated');
       translateReadmeBtn.disabled = false;
       translateReadmeBtn.textContent = '显示原文';
-      updateReadmeDisplay();
       if (msg.warning) {
         readmeWarn.innerHTML = ICON_WARNING + '<span>' + esc(msg.warning) + '</span>';
         readmeWarn.style.display = 'flex';
