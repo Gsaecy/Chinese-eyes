@@ -358,6 +358,18 @@ export class Translator {
     return { text: result };
   }
 
+  /** 详情页 AI 翻译：整篇走 LLM（不用免费通道），保持基本段落结构，中文块保留；失败抛出异常 */
+  async translateWithAI(markdown: string): Promise<string> {
+    if (!markdown || !markdown.trim()) return markdown;
+    if (!this.isLLMProvider() || !this.config.apiKey) {
+      throw new Error('AI 翻译需要配置 DeepSeek 或 OpenAI 兼容 API Key，请先在设置中配置');
+    }
+    const { endpoint, model } = this.resolveLLMConfig();
+    const out = await this.translateMarkdownViaLLM(endpoint, model, markdown);
+    if (!out || !out.trim()) throw new Error('AI 返回为空');
+    return out;
+  }
+
   /** LLM 分段翻译 Markdown（长文分块避免超限/截断），失败抛出异常 */
   private async translateMarkdownViaLLM(
     endpoint: string,
@@ -367,11 +379,11 @@ export class Translator {
     const systemPrompt = [
       '你是一个专业的 Markdown 翻译器，把英文 Markdown 文档翻译成简体中文 Markdown。',
       '规则：',
-      '1. 完整保留原 Markdown 结构（标题、列表、表格、代码块、链接、图片、HTML 标签）',
+      '1. 保持基本段落结构和标题层级；代码块、行内代码、命令、链接、图片、HTML 标签原样保留',
       '2. 只翻译自然语言内容，不要翻译代码块、行内代码、命令、URL、品牌名',
       '3. 保留技术术语（API/SDK/CLI/IDE 等）不翻译',
       '4. 翻译后直接输出 Markdown，不要包在 ```markdown 代码块里，不要寒暄说明',
-      '5. 如果原文已是中文则原样返回',
+      '5. 中文句子原样保留，只翻译英文部分',
       '6. 对涉及收费的句子（含 paid/pricing/subscription/trial/premium/license/billing 等），在该句末尾追加 ⚠️',
     ].join('\n');
 

@@ -79,12 +79,6 @@
           "markdownDescription": "如 `deepseek-chat`、`gpt-4o-mini`、`qwen-plus` 等",
           "order": 4
         },
-        "chineseEyes.autoTranslateReadme": {
-          "type": "boolean",
-          "default": true,
-          "description": "打开扩展详情时自动翻译 README 内容",
-          "order": 5
-        },
         "chineseEyes.proxyUrl": {
           "type": "string",
           "default": "",

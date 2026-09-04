@@ -102,16 +102,9 @@ export class ExtensionDetailPanel {
         this._item.detailUrl
       );
       this._originalReadme = readme || '';
-      // 将原文 README 发送到 webview 显示
+      // 将原文 README 发送到 webview 显示（不自动翻译，用户可只使用 AI 总结）
       if (this._originalReadme) {
         this.post({ type: 'originalReadme', content: this._originalReadme });
-        // 「打开详情时自动翻译」默认开启：直接翻译并显示，无需再点按钮
-        const autoTranslate = vscode.workspace
-          .getConfiguration('chineseEyes')
-          .get('autoTranslateReadme', true);
-        if (autoTranslate) {
-          this.handleTranslateReadme();
-        }
       }
     } catch (err: any) {
       // README 获取失败不影响使用，AI 总结会使用 description
@@ -204,19 +197,17 @@ export class ExtensionDetailPanel {
     }
     this.post({ type: 'translatingReadme' });
     try {
-      const isHtml = /^\s*<(html|body|div|table|section|article|main|header|footer)\b/i.test(this._originalReadme);
       const text = this._originalReadme;
-      // 原文几乎全中文：直接返回并提示，不再发起翻译请求（混排文档仍走翻译）
+      const isHtml = /^\s*<(html|body|div|table|section|article|main|header|footer)\b/i.test(text);
+      // 原文几乎全中文：直接返回并提示，不再发起翻译请求
       if (chineseRatio(isHtml ? stripHtml(text) : text) > 0.9) {
         this.post({ type: 'translateReadmeDone', translated: text, warning: '原文已是中文，无需翻译' });
         return;
       }
-      // HTML 文档只翻译文本节点（标签/属性/布局原样）；Markdown 结构化翻译保持布局
-      const res = isHtml
-        ? await this._translator.translateHtml(text, this.getProxyUrl())
-        : await this._translator.translateMarkdown(text, this.getProxyUrl());
-      this._translatedReadme = res.text;
-      this.post({ type: 'translateReadmeDone', translated: res.text, warning: res.warning });
+      // 点击翻译后全部使用 AI 翻译（不走免费通道），译文替换原文显示
+      const translated = await this._translator.translateWithAI(text);
+      this._translatedReadme = translated;
+      this.post({ type: 'translateReadmeDone', translated });
     } catch (err: any) {
       this.post({ type: 'translateReadmeError', message: err.message || String(err) });
     }
