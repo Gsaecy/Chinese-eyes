@@ -260,34 +260,87 @@ export class Translator {
 
   /**
    * 翻译一段较长的 Markdown 文本（如 README）。
-   * 策略：免费在线翻译优先（有道/Google）→ 受次数/字数限制时才调用 LLM API → 智能翻译兑底。
+   * 策略：结构保持翻译（代码块/表格/HTML 原样，只翻译文本，布局与原文一致）。
+   * 免费在线翻译优先 → 受次数/字数限制时才调用 LLM API → 本地词典兑底。
    * API 默认只用于 AI 总结。
    */
   async translateMarkdown(markdown: string, proxyUrl?: string): Promise<{ text: string; warning?: string }> {
     if (!markdown || !markdown.trim()) return { text: markdown };
 
-    // 1. 免费在线翻译优先（有道/Google，不消耗 API 额度）
-    const free = await this.tryFreeOnlineTranslate(markdown, proxyUrl);
-    if (free && free.trim() && isRealTranslation(markdown, free)) {
-      return { text: free };
-    }
-
-    // 2. 免费服务受次数/字数限制 → 才动用 LLM API（API 默认只用于 AI 总结）
-    if (this.isLLMProvider() && this.config.apiKey) {
-      const { endpoint, model } = this.resolveLLMConfig();
-      try {
-        const out = await this.translateMarkdownViaLLM(endpoint, model, markdown);
-        if (out) {
-          return { text: out, warning: '免费在线翻译受次数/字数限制，已自动改用 API 翻译' };
-        }
-      } catch (err) {
-        console.warn('[chineseEyes] LLM Markdown 翻译失败，降级到智能翻译:', err);
+    const blocks = splitMarkdownBlocks(markdown);
+    const parts: string[] = [];
+    let usedApi = false;
+    for (const block of blocks) {
+      if (block.type === 'raw') {
+        parts.push(block.text); // 代码块/表格/HTML 原样保留
+        continue;
       }
+      const { stripped, prefixes } = stripMarkdownPrefixes(block.text);
+      let out: string | null = await this.tryFreeOnlineTranslate(stripped, proxyUrl);
+      if (!out || !isRealTranslation(stripped, out)) {
+        // 免费受次数/字数限制 → 块级调用 LLM（保持行结构）
+        out = await this.translateTextViaLLM(stripped);
+        if (out) usedApi = true;
+      }
+      if (!out || !isRealTranslation(stripped, out)) {
+        out = localTranslate(stripped);
+      }
+      parts.push(restoreMarkdownPrefixes(out, prefixes));
     }
+    const text = parts.join('\n\n');
+    return {
+      text,
+      warning: usedApi ? '免费在线翻译受次数/字数限制，已自动改用 API 翻译' : undefined,
+    };
+  }
 
-    // 3. 智能翻译兑底（免费通道 60s 冷却已跳过；已配置非 LLM 翻译 API 时走 API；否则本地词典）
-    const res = await this.translateSmart(markdown, proxyUrl);
-    return { text: res.text, warning: res.warning };
+  /** 块级 LLM 翻译（保持换行结构），不可用时返回 null */
+  private async translateTextViaLLM(text: string): Promise<string | null> {
+    if (!this.isLLMProvider() || !this.config.apiKey) return null;
+    const { endpoint, model } = this.resolveLLMConfig();
+    try {
+      const prompt = [
+        '把以下英文段落翻译成简体中文，保持原有换行行数不变。',
+        '只输出译文，不要寒暄说明。',
+      ].join('\n');
+      const out = await this.chatCompletion(endpoint, model, prompt, text, 0.1, 2000, 30000);
+      return out && out.trim() ? out.trim() : null;
+    } catch (err) {
+      console.warn('[chineseEyes] 块级 LLM 翻译失败:', err);
+      return null;
+    }
+  }
+
+  /** 翻译 HTML 文档：只翻译文本节点，标签与属性原样保留，布局不变 */
+  async translateHtml(html: string, proxyUrl?: string): Promise<{ text: string; warning?: string }> {
+    if (!html || !html.trim()) return { text: html };
+    let usedApi = false;
+    const textNodes: string[] = [];
+    // 抽出标签之间的文本节点
+    const skeleton = html.replace(/>([^<]+)</g, (_m, inner) => {
+      const idx = textNodes.length;
+      textNodes.push(inner);
+      return '>\u0000' + idx + '\u0000<';
+    });
+    for (let i = 0; i < textNodes.length; i++) {
+      const node = textNodes[i];
+      if (!node.trim() || chineseRatio(node) > 0.3) continue; // 空节点/已是中文跳过
+      let out: string | null = await this.tryFreeOnlineTranslate(node.trim(), proxyUrl);
+      if (!out || !isRealTranslation(node.trim(), out)) {
+        out = await this.translateTextViaLLM(node.trim());
+        if (out) usedApi = true;
+      }
+      if (!out || !isRealTranslation(node.trim(), out)) {
+        out = localTranslate(node.trim());
+      }
+      textNodes[i] = out;
+    }
+    // 回填：占位符换回译文（去掉多余空白）
+    const result = skeleton.replace(/\u0000(\d+)\u0000/g, (_m, idx) => textNodes[Number(idx)]);
+    return {
+      text: result,
+      warning: usedApi ? '免费在线翻译受次数/字数限制，已自动改用 API 翻译' : undefined,
+    };
   }
 
   /** LLM 分段翻译 Markdown（长文分块避免超限/截断），失败抛出异常 */
@@ -1324,6 +1377,98 @@ function splitTextForTranslate(text: string, max = 1400): string[] {
   }
   if (cur) parts.push(cur);
   return parts.length > 0 ? parts : [text];
+}
+
+/** 按 Markdown 结构拆块：代码围栏/表格/HTML 为 raw（不翻译），其余为 text 块 */
+function splitMarkdownBlocks(markdown: string): { type: 'raw' | 'text'; text: string }[] {
+  const lines = markdown.split('\n');
+  const blocks: { type: 'raw' | 'text'; text: string }[] = [];
+  let cur: string[] = [];
+  let curType: 'raw' | 'text' = 'text';
+  let inFence = false;
+  const flush = () => {
+    if (cur.length === 0) return;
+    blocks.push({ type: curType, text: cur.join('\n') });
+    cur = [];
+    curType = 'text';
+  };
+  for (const line of lines) {
+    const isFenceLine = /^\s*(```|~~~)/.test(line);
+    const isTableLine = !inFence && /^\s*\|/.test(line);
+    const isRawLine = !inFence && !isTableLine && /^\s*<[^>]+>\s*$/.test(line);
+
+    if (isFenceLine) {
+      // 代码围栏：开始或结束，整块原样
+      if (inFence) {
+        cur.push(line);
+        flush();
+        inFence = false;
+      } else {
+        flush();
+        curType = 'raw';
+        cur.push(line);
+        inFence = true;
+      }
+      continue;
+    }
+    if (inFence) {
+      cur.push(line);
+      continue;
+    }
+    if (isTableLine) {
+      if (curType !== 'raw') {
+        flush();
+        curType = 'raw';
+      }
+      cur.push(line);
+      continue;
+    }
+    if (isRawLine) {
+      flush();
+      blocks.push({ type: 'raw', text: line });
+      continue;
+    }
+    if (line.trim() === '') {
+      flush();
+      continue;
+    }
+    if (curType !== 'text') {
+      // 表格行结束后的普通行：flush raw
+      flush();
+    }
+    cur.push(line);
+  }
+  flush();
+  return blocks;
+}
+
+/** 提取每行的 Markdown 前缀（标题/列表/引用等符号），翻译纯文本后回填保持布局 */
+function stripMarkdownPrefixes(block: string): { stripped: string; prefixes: string[] } {
+  const prefixes: string[] = [];
+  const cleaned = block.split('\n').map((line) => {
+    const m = line.match(/^(\s*(?:#{1,6}|[-*+]|\d+\.|>)\s+)/);
+    if (m) {
+      prefixes.push(m[1]);
+      return line.slice(m[1].length);
+    }
+    prefixes.push('');
+    return line;
+  });
+  return { stripped: cleaned.join('\n'), prefixes };
+}
+
+/** 将译文回填 Markdown 前缀：行数一致逐行回填，否则前缀合并到首行 */
+function restoreMarkdownPrefixes(translated: string, prefixes: string[]): string {
+  if (!prefixes || prefixes.length === 0) return translated;
+  if (!prefixes.some((p) => p)) return translated;
+  const lines = translated.split('\n');
+  if (lines.length === prefixes.length) {
+    return lines.map((l, i) => prefixes[i] + l).join('\n');
+  }
+  // 行数不一致：所有前缀合并到第一行，其余行保持缩进
+  const first = (prefixes.find((p) => p) || '') + lines[0];
+  const rest = lines.slice(1).map((l) => (prefixes[1] ? '  ' : '') + l);
+  return [first, ...rest].join('\n');
 }
 
 /** 按段落边界切分 Markdown，供 LLM 分段翻译（避免超长输入被截断/拒答） */

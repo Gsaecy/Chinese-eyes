@@ -205,13 +205,16 @@ export class ExtensionDetailPanel {
     this.post({ type: 'translatingReadme' });
     try {
       const isHtml = /^\s*<(html|body|div|table|section|article|main|header|footer)\b/i.test(this._originalReadme);
-      const text = isHtml ? stripHtml(this._originalReadme) : this._originalReadme;
+      const text = this._originalReadme;
       // 原文已是中文：直接返回并提示，不再发起翻译请求
-      if (chineseRatio(text) > 0.3) {
+      if (chineseRatio(isHtml ? stripHtml(text) : text) > 0.3) {
         this.post({ type: 'translateReadmeDone', translated: text, warning: '原文已是中文，无需翻译' });
         return;
       }
-      const res = await this._translator.translateMarkdown(text, this.getProxyUrl());
+      // HTML 文档只翻译文本节点（标签/属性/布局原样）；Markdown 结构化翻译保持布局
+      const res = isHtml
+        ? await this._translator.translateHtml(text, this.getProxyUrl())
+        : await this._translator.translateMarkdown(text, this.getProxyUrl());
       this._translatedReadme = res.text;
       this.post({ type: 'translateReadmeDone', translated: res.text, warning: res.warning });
     } catch (err: any) {
