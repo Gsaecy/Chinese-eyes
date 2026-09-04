@@ -646,6 +646,72 @@ export async function listModels(endpoint: string, apiKey: string): Promise<stri
   throw new Error('无法从该地址检索模型列表，请手动输入模型名');
 }
 
+/**
+ * 校验模型名是否有效：发送最小测试请求（max_tokens=1），返回结果。
+ */
+export async function checkModel(
+  endpoint: string,
+  model: string,
+  apiKey: string
+): Promise<{ ok: boolean; error?: string }> {
+  if (!endpoint || !endpoint.trim()) {
+    return { ok: false, error: '未填写 API 地址' };
+  }
+  let base: string;
+  try {
+    const u = new URL(endpoint.trim());
+    const path = u.pathname.replace(/\/+$/, '');
+    base = `${u.origin}${path}`;
+  } catch {
+    return { ok: false, error: 'API 地址格式错误' };
+  }
+
+  const candidates = [`${base}/chat/completions`, `${base}/v1/chat/completions`];
+  for (const url of candidates) {
+    try {
+      const res = await fetchWithTimeout(
+        url,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            messages: [{ role: 'user', content: 'hi' }],
+            max_tokens: 1,
+          }),
+        },
+        8000
+      );
+      if (res.ok) {
+        return { ok: true };
+      }
+      const raw = await res.text().catch(() => '');
+      let msg = 'HTTP ' + res.status;
+      try {
+        const j = JSON.parse(raw);
+        if (j.error?.message) msg = String(j.error.message);
+      } catch { /* 保留 HTTP 状态提示 */ }
+      return { ok: false, error: msg };
+    } catch (err: any) {
+      const msg = String(err?.message || err || '');
+      // 提取 HTTP 错误响应里的 error.message（如模型不存在、Key 无效等简短提示）
+      const m = msg.match(/HTTP (\d+):\s*([\s\S]*)/);
+      if (m) {
+        try {
+          const j = JSON.parse(m[2]);
+          if (j.error?.message) return { ok: false, error: String(j.error.message) };
+        } catch { /* 非 JSON 响应体 */ }
+        return { ok: false, error: 'HTTP ' + m[1] };
+      }
+      // 网络/超时等继续尝试下一个候选地址
+    }
+  }
+  return { ok: false, error: '无法连接该地址验证模型，请检查网络' };
+}
+
 // ============================================================
 //  本地翻译器 —— 内置英文→中文词表，无需网络
 // ============================================================

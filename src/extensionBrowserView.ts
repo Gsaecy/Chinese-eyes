@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { Translator, TranslationConfig, listModels } from './translator';
+import { Translator, TranslationConfig, listModels, checkModel } from './translator';
 import { queryExtensions, reorderByRelevance, sortItemsBy } from './marketplaceApi';
 import { ExtensionItem } from './types';
 import { ExtensionDetailPanel } from './extensionDetailPanel';
@@ -182,8 +182,7 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
             const apiKey = String(msg.apiKey || '').trim();
             await this.persistSettings(provider, apiKey, endpoint, model);
             const cfg = this.syncConfig();
-
-            // 先立即返回应用结果（不阻塞按钮状态），模型检测在后台异步进行
+            this.verifyModelInBackground(provider, endpoint, model, apiKey);
             this.postMessage({
               type: 'applyApiKeyResult',
               provider: cfg.provider,
@@ -226,6 +225,12 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
               msg.model || ''
             );
             const cfg = this.syncConfig();
+            this.verifyModelInBackground(
+              msg.provider || 'deepseek',
+              msg.endpoint || '',
+              msg.model || '',
+              msg.apiKey || ''
+            );
             this.postMessage({
               type: 'settingsSaved',
               provider: cfg.provider,
@@ -289,6 +294,23 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
     await chConfig.update('apiKey', apiKey, vscode.ConfigurationTarget.Global);
     await chConfig.update('apiEndpoint', endpoint, vscode.ConfigurationTarget.Global);
     await chConfig.update('apiModel', model, vscode.ConfigurationTarget.Global);
+  }
+
+  /** 保存后后台校验模型名是否有效（LLM 供应商 + 已填 Key），无效时提醒用户 */
+  private verifyModelInBackground(provider: string, endpoint: string, model: string, apiKey: string): void {
+    if (!(provider === 'deepseek' || provider === 'openai-compatible') || !apiKey || !model) {
+      return;
+    }
+    const defaultEndpoint = provider === 'deepseek' ? 'https://api.deepseek.com' : 'https://api.openai.com';
+    checkModel(endpoint || defaultEndpoint, model, apiKey)
+      .then((r) => {
+        if (!r.ok) {
+          this.postMessage({ type: 'modelCheckResult', error: r.error || '模型不可用', model });
+        }
+      })
+      .catch((e: any) => {
+        console.warn('[chineseEyes] 模型校验异常:', e);
+      });
   }
 
   private async doSearch(query: string, reset: boolean): Promise<void> {
@@ -1149,6 +1171,10 @@ window.addEventListener('message', (event) => {
         populateModelSelect(msg.models);
       }
       showToast('API Key 已应用' + (endpointInput.value.trim() ? '，正在后台检测模型…' : ''), 'success');
+      break;
+    case 'modelCheckResult':
+      // 保存/应用后模型校验失败：明确提醒用户模型名可能不正确
+      showToast('模型「' + (msg.model || '') + '」校验失败：' + (msg.error || '未知错误') + '。请检查模型名或点「检测模型」选择正确模型。', 'error');
       break;
     case 'detectModelsResult':
       detectModelsBtn.disabled = false;
