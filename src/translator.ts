@@ -572,6 +572,64 @@ export class Translator {
   }
 }
 
+/**
+ * 按用户填写的 endpoint + API Key 检索可用模型列表（OpenAI 兼容 /models 接口）。
+ * 兼容 endpoint 是否带 /v1 两种写法。
+ */
+export async function listModels(endpoint: string, apiKey: string): Promise<string[]> {
+  if (!endpoint || !endpoint.trim()) {
+    throw new Error('请先填写 API 地址');
+  }
+  if (!apiKey || !apiKey.trim()) {
+    throw new Error('请先填写 API Key');
+  }
+
+  let base: string;
+  try {
+    const u = new URL(endpoint.trim());
+    const path = u.pathname.replace(/\/+$/, '');
+    base = `${u.origin}${path}`;
+  } catch {
+    throw new Error('API 地址格式错误: ' + endpoint);
+  }
+
+  const candidates = [`${base}/models`, `${base}/v1/models`];
+  let lastErr: unknown;
+  for (const url of candidates) {
+    try {
+      const res = await fetchWithTimeout(
+        url,
+        {
+          method: 'GET',
+          headers: {
+            Accept: 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+          },
+        },
+        10000
+      );
+      const data = (await res.json()) as { data?: Array<{ id?: string }> };
+      const ids = (data?.data || [])
+        .map((m) => (m && m.id ? String(m.id).trim() : ''))
+        .filter(Boolean);
+      if (ids.length > 0) {
+        return [...new Set(ids)];
+      }
+      lastErr = new Error('接口返回的模型列表为空');
+    } catch (err: any) {
+      lastErr = err;
+      const msg = String(err?.message || err || '');
+      if (/HTTP 40[134]/.test(msg)) {
+        // 认证/权限错误不必再试第二个地址
+        throw new Error(msg.includes('401') ? 'API Key 无效或没有权限（401），请检查 Key' : msg);
+      }
+    }
+  }
+  throw lastErr instanceof Error
+    ? lastErr
+    : new Error('无法从该地址检索模型列表，请手动输入模型名');
+}
+
 // ============================================================
 //  本地翻译器 —— 内置英文→中文词表，无需网络
 // ============================================================

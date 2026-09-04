@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { Translator, TranslationConfig } from './translator';
+import { Translator, TranslationConfig, listModels } from './translator';
 import { queryExtensions, reorderByRelevance, sortItemsBy } from './marketplaceApi';
 import { ExtensionItem } from './types';
 import { ExtensionDetailPanel } from './extensionDetailPanel';
@@ -161,6 +161,19 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
           break;
         }
 
+        case 'detectModels': {
+          try {
+            const models = await listModels(
+              String(msg.endpoint || '').trim(),
+              String(msg.apiKey || '').trim()
+            );
+            this.postMessage({ type: 'detectModelsResult', models });
+          } catch (err: any) {
+            this.postMessage({ type: 'detectModelsResult', error: err.message || String(err) });
+          }
+          break;
+        }
+
         case 'saveSettings': {
           try {
             const chConfig = vscode.workspace.getConfiguration('chineseEyes');
@@ -306,6 +319,7 @@ body{padding:12px;font-size:13px}
 .search-row .ap-input{flex:1;min-width:0}
 .toolbar{display:flex;gap:6px;align-items:center}
 .toolbar .spacer{flex:1}
+.model-row{display:flex;gap:6px;align-items:center}
 .capability-bar{display:flex;gap:14px;align-items:center;padding:2px 8px;font-size:10.5px;color:var(--text-weak)}
 .capability-bar .dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:4px;vertical-align:1px}
 .capability-bar .dot.g{background:#34c759}
@@ -408,7 +422,11 @@ body{padding:12px;font-size:13px}
     <input type="text" id="endpointInput" class="ap-input" placeholder="如 https://api.deepseek.com 或 https://api.openai.com">
   </div>
   <div class="ap-field">
-    <label>模型名称（选预设后自动填充，可改）</label>
+    <label>模型（预设/检测自动列出，也可手动输入）</label>
+    <div class="model-row">
+      <select id="modelSelect" class="ap-select" style="flex:1"></select>
+      <button id="detectModelsBtn" class="ap-btn ap-btn-ghost ap-btn-sm" type="button" title="用 API 地址 + Key 检索可用模型列表">检测模型</button>
+    </div>
     <input type="text" id="modelInput" class="ap-input" placeholder="如 deepseek-chat、gpt-4o-mini、qwen-plus">
   </div>
   <div class="settings-actions">
@@ -452,6 +470,8 @@ const closeSettings = el('closeSettings');
 const providerSelect = el('providerSelect');
 const presetSelect = el('presetSelect');
 const apiKeyInput = el('apiKeyInput');
+const modelSelect = el('modelSelect');
+const detectModelsBtn = el('detectModelsBtn');
 const endpointInput = el('endpointInput');
 const modelInput = el('modelInput');
 const saveSettingsBtn = el('saveSettingsBtn');
@@ -645,12 +665,42 @@ sortChips.forEach((chip) => {
 
 /* ---- Agent 预设：选择后自动填充 provider / endpoint / model ---- */
 const PRESETS = {
-  deepseek: { provider: 'deepseek', endpoint: 'https://api.deepseek.com', model: 'deepseek-chat' },
-  openai: { provider: 'openai-compatible', endpoint: 'https://api.openai.com', model: 'gpt-4o-mini' },
-  dashscope: { provider: 'openai-compatible', endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
-  moonshot: { provider: 'openai-compatible', endpoint: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
-  glm: { provider: 'openai-compatible', endpoint: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-plus' },
-  siliconflow: { provider: 'openai-compatible', endpoint: 'https://api.siliconflow.cn/v1', model: 'deepseek-ai/DeepSeek-V3' },
+  deepseek: {
+    provider: 'deepseek',
+    endpoint: 'https://api.deepseek.com',
+    model: 'deepseek-chat',
+    models: ['deepseek-chat', 'deepseek-reasoner'],
+  },
+  openai: {
+    provider: 'openai-compatible',
+    endpoint: 'https://api.openai.com',
+    model: 'gpt-4o-mini',
+    models: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini', 'gpt-4.1', 'o4-mini'],
+  },
+  dashscope: {
+    provider: 'openai-compatible',
+    endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    model: 'qwen-plus',
+    models: ['qwen-plus', 'qwen-turbo', 'qwen-max', 'qwen-flash', 'qwen-plus-latest'],
+  },
+  moonshot: {
+    provider: 'openai-compatible',
+    endpoint: 'https://api.moonshot.cn/v1',
+    model: 'moonshot-v1-8k',
+    models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
+  },
+  glm: {
+    provider: 'openai-compatible',
+    endpoint: 'https://open.bigmodel.cn/api/paas/v4',
+    model: 'glm-4-plus',
+    models: ['glm-4-plus', 'glm-4-air', 'glm-4-flash', 'glm-4'],
+  },
+  siliconflow: {
+    provider: 'openai-compatible',
+    endpoint: 'https://api.siliconflow.cn/v1',
+    model: 'deepseek-ai/DeepSeek-V3',
+    models: ['deepseek-ai/DeepSeek-V3', 'deepseek-ai/DeepSeek-R1', 'Qwen/Qwen2.5-72B-Instruct'],
+  },
 };
 
 function detectPreset(provider, endpoint, model){
@@ -663,6 +713,38 @@ function detectPreset(provider, endpoint, model){
   return 'custom';
 }
 
+/** 按 endpoint 域名匹配预设（不要求模型一致，用于自动列出模型候选） */
+function presetByEndpoint(endpoint){
+  const ep = String(endpoint || '').trim().replace(/\\/+$/, '').toLowerCase();
+  if (!ep) return null;
+  for (const key of Object.keys(PRESETS)) {
+    const p = PRESETS[key];
+    const pe = p.endpoint.toLowerCase().replace(/\\/+$/, '');
+    if (ep === pe) return p;
+    try {
+      if (new URL(ep).hostname === new URL(pe).hostname) return p;
+    } catch (e) { /* 忽略 */ }
+  }
+  return null;
+}
+
+/** 填充模型下拉框：候选模型 + 当前值（保持选中），不覆盖用户已填内容 */
+function populateModelSelect(candidates){
+  if (!modelSelect) return;
+  const current = (modelInput.value || '').trim();
+  const list = Array.isArray(candidates) ? candidates.slice() : [];
+  if (current && !list.includes(current)) {
+    list.unshift(current);
+  }
+  modelSelect.innerHTML = list
+    .map((m) => '<option value="' + String(m).replace(/"/g, '&quot;') + '">' + String(m).replace(/</g, '&lt;') + '</option>')
+    .join('');
+  if (current) modelSelect.value = current;
+  if (!list.length) {
+    modelSelect.innerHTML = '<option value="">（填写地址后点「检测模型」）</option>';
+  }
+}
+
 if (presetSelect) {
   presetSelect.addEventListener('change', () => {
     const p = PRESETS[presetSelect.value];
@@ -670,7 +752,40 @@ if (presetSelect) {
       providerSelect.value = p.provider;
       endpointInput.value = p.endpoint;
       modelInput.value = p.model;
+      populateModelSelect(p.models);
     }
+  });
+}
+
+// 输入地址时自动匹配预设并列出候选模型（不覆盖用户已填的模型）
+if (endpointInput) {
+  endpointInput.addEventListener('input', () => {
+    const p = presetByEndpoint(endpointInput.value);
+    if (p && presetSelect.value === 'custom') {
+      populateModelSelect(p.models);
+    }
+  });
+}
+
+// 下拉框选择 → 同步到输入框
+if (modelSelect) {
+  modelSelect.addEventListener('change', () => {
+    if (modelSelect.value) {
+      modelInput.value = modelSelect.value;
+    }
+  });
+}
+
+// 检测模型：用当前地址 + Key 从 API 检索模型列表
+if (detectModelsBtn) {
+  detectModelsBtn.addEventListener('click', () => {
+    const endpoint = endpointInput.value.trim();
+    const apiKey = apiKeyInput.value.trim();
+    if (!endpoint) { showToast('请先填写 API 地址', 'error'); return; }
+    if (!apiKey) { showToast('请先填写 API Key', 'error'); return; }
+    detectModelsBtn.disabled = true;
+    detectModelsBtn.textContent = '检测中…';
+    vscode.postMessage({ type: 'detectModels', endpoint, apiKey });
   });
 }
 
@@ -785,12 +900,29 @@ window.addEventListener('message', (event) => {
       renderList();
       break;
     case 'settingsData':
-      // 从后端获取到真实配置值，填充设置面板
+      // 从后端获取到真实配置值，填充设置面板（老用户已保存的配置原样展示）
       providerSelect.value = msg.provider || 'local';
       apiKeyInput.value = msg.apiKey || '';
       endpointInput.value = msg.endpoint || '';
       modelInput.value = msg.model || '';
       presetSelect.value = detectPreset(msg.provider, msg.endpoint, msg.model);
+      // 按地址匹配预设列出候选模型，当前已填模型保持选中且不被覆盖
+      const matched = presetByEndpoint(msg.endpoint);
+      populateModelSelect(matched ? matched.models : (msg.model ? [msg.model] : []));
+      break;
+    case 'detectModelsResult':
+      detectModelsBtn.disabled = false;
+      detectModelsBtn.textContent = '检测模型';
+      if (msg.error) {
+        showToast(msg.error, 'error');
+        break;
+      }
+      if (Array.isArray(msg.models) && msg.models.length > 0) {
+        populateModelSelect(msg.models);
+        showToast('检测到 ' + msg.models.length + ' 个模型，可在下拉框切换', 'success');
+      } else {
+        showToast('未检测到模型列表，请手动输入模型名', 'error');
+      }
       break;
     case 'settingsSaved':
       saveSettingsBtn.disabled = false;
