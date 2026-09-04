@@ -174,14 +174,55 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
           break;
         }
 
+        case 'applyApiKey': {
+          try {
+            const provider = msg.provider || 'deepseek';
+            const endpoint = String(msg.endpoint || '').trim();
+            const model = String(msg.model || '').trim();
+            const apiKey = String(msg.apiKey || '').trim();
+            await this.persistSettings(provider, apiKey, endpoint, model);
+            const cfg = this.syncConfig();
+
+            // 保存后自动检测模型列表
+            let models: string[] = [];
+            let detectError = '';
+            if (endpoint && apiKey && (provider === 'deepseek' || provider === 'openai-compatible')) {
+              try {
+                models = await listModels(endpoint, apiKey);
+              } catch (e: any) {
+                detectError = e.message || String(e);
+              }
+            }
+            this.postMessage({
+              type: 'applyApiKeyResult',
+              provider: cfg.provider,
+              hasApiKey: !!cfg.apiKey,
+              canSummarize: this._translator.canSummarize(),
+              models,
+              detectError,
+            });
+          } catch (err: any) {
+            const raw = err.message || String(err);
+            if (/Unable to write into user settings|无法写入用户设置/i.test(raw)) {
+              this.postMessage({
+                type: 'error',
+                message: '无法写入 VS Code 用户设置：settings.json 可能存在 JSON 语法错误。请点「在 VS Code 设置中打开」修复 settings.json 后重试。',
+              });
+            } else {
+              this.postMessage({ type: 'error', message: '保存 API Key 失败: ' + raw });
+            }
+          }
+          break;
+        }
+
         case 'saveSettings': {
           try {
-            const chConfig = vscode.workspace.getConfiguration('chineseEyes');
-            const provider = msg.provider || 'deepseek';
-            await chConfig.update('translationProvider', provider, vscode.ConfigurationTarget.Global);
-            await chConfig.update('apiKey', msg.apiKey || '', vscode.ConfigurationTarget.Global);
-            await chConfig.update('apiEndpoint', msg.endpoint || '', vscode.ConfigurationTarget.Global);
-            await chConfig.update('apiModel', msg.model || '', vscode.ConfigurationTarget.Global);
+            await this.persistSettings(
+              msg.provider || 'deepseek',
+              msg.apiKey || '',
+              msg.endpoint || '',
+              msg.model || ''
+            );
             const cfg = this.syncConfig();
             this.postMessage({
               type: 'settingsSaved',
@@ -233,6 +274,19 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
       console.error('[chineseEyes] handleMessage 异常:', err);
       this.postMessage({ type: 'error', message: err.message || String(err) });
     }
+  }
+
+  private async persistSettings(
+    provider: string,
+    apiKey: string,
+    endpoint: string,
+    model: string
+  ): Promise<void> {
+    const chConfig = vscode.workspace.getConfiguration('chineseEyes');
+    await chConfig.update('translationProvider', provider, vscode.ConfigurationTarget.Global);
+    await chConfig.update('apiKey', apiKey, vscode.ConfigurationTarget.Global);
+    await chConfig.update('apiEndpoint', endpoint, vscode.ConfigurationTarget.Global);
+    await chConfig.update('apiModel', model, vscode.ConfigurationTarget.Global);
   }
 
   private async doSearch(query: string, reset: boolean): Promise<void> {
@@ -328,6 +382,8 @@ body{padding:12px;font-size:13px}
 .toolbar{display:flex;gap:6px;align-items:center}
 .toolbar .spacer{flex:1}
 .model-row{display:flex;gap:6px;align-items:center}
+.key-row{display:flex;gap:6px;align-items:center}
+.key-row .ap-input{flex:1;min-width:0}
 .capability-bar{display:flex;gap:14px;align-items:center;padding:2px 8px;font-size:10.5px;color:var(--text-weak)}
 .capability-bar .dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:4px;vertical-align:1px}
 .capability-bar .dot.g{background:#34c759}
@@ -422,8 +478,11 @@ body{padding:12px;font-size:13px}
   </div>
   <div class="ap-field">
     <label>API Key</label>
-    <input type="password" id="apiKeyInput" class="ap-input" placeholder="输入你的 API Key...">
-    <div class="hint">本地词典不需要 Key；其余 provider 必须填写</div>
+    <div class="key-row">
+      <input type="password" id="apiKeyInput" class="ap-input" placeholder="输入你的 API Key...">
+      <button id="applyKeyBtn" class="ap-btn ap-btn-primary ap-btn-sm" type="button" title="单独保存 API Key 并自动检测模型">应用</button>
+    </div>
+    <div class="hint">点「应用」立即保存 Key 并检测模型；本地词典不需要 Key</div>
   </div>
   <div class="ap-field">
     <label>API 地址（选预设后自动填充，可改）</label>
@@ -480,6 +539,7 @@ const presetSelect = el('presetSelect');
 const apiKeyInput = el('apiKeyInput');
 const modelSelect = el('modelSelect');
 const detectModelsBtn = el('detectModelsBtn');
+const applyKeyBtn = el('applyKeyBtn');
 const endpointInput = el('endpointInput');
 const modelInput = el('modelInput');
 const saveSettingsBtn = el('saveSettingsBtn');
@@ -768,9 +828,30 @@ if (presetSelect) {
 // 输入地址时自动匹配预设并列出候选模型（不覆盖用户已填的模型）
 if (endpointInput) {
   endpointInput.addEventListener('input', () => {
-    const p = presetByEndpoint(endpointInput.value);
-    if (p && presetSelect.value === 'custom') {
-      populateModelSelect(p.models);
+    const m = presetByEndpoint(endpointInput.value);
+    if (m && presetSelect.value === 'custom') {
+      populateModelSelect(m.preset.models);
+    }
+  });
+}
+
+// 提供商选择联动：任选「Agent 预设」或「提供商」都能识别地址与模型
+if (providerSelect) {
+  providerSelect.addEventListener('change', () => {
+    const provider = providerSelect.value;
+    const matched = presetByEndpoint(endpointInput.value);
+    if ((provider === 'deepseek' || provider === 'openai-compatible') && matched) {
+      // 地址匹配预设 → 同步预设选中并列出候选模型
+      presetSelect.value = matched.key;
+      populateModelSelect(matched.preset.models);
+    } else if (provider === 'deepseek' && !endpointInput.value.trim()) {
+      // 直接选 DeepSeek → 应用官方预设
+      presetSelect.value = 'deepseek';
+      endpointInput.value = PRESETS.deepseek.endpoint;
+      if (!modelInput.value.trim()) modelInput.value = PRESETS.deepseek.model;
+      populateModelSelect(PRESETS.deepseek.models);
+    } else if (provider === 'openai-compatible' && !endpointInput.value.trim()) {
+      showToast('OpenAI 兼容模式需要 API 地址：建议在上方「Agent 预设」选择服务商', 'info');
     }
   });
 }
@@ -794,6 +875,28 @@ if (detectModelsBtn) {
     detectModelsBtn.disabled = true;
     detectModelsBtn.textContent = '检测中…';
     vscode.postMessage({ type: 'detectModels', endpoint, apiKey });
+  });
+}
+
+// 应用按钮：单独保存 API Key 并自动检测模型（防止未点底部保存导致 Key 丢失）
+if (applyKeyBtn) {
+  applyKeyBtn.addEventListener('click', () => {
+    const apiKey = apiKeyInput.value.trim();
+    if (!apiKey) { showToast('请先粘贴 API Key', 'error'); return; }
+    if (presetSelect.value === 'custom' && !endpointInput.value.trim() && providerSelect.value === 'local') {
+      showToast('请选择 Agent：在上方「Agent 预设」中选择（如 DeepSeek / 阿里云 / Kimi），API Key 才能生效', 'error');
+      presetSelect.focus();
+      return;
+    }
+    applyKeyBtn.disabled = true;
+    applyKeyBtn.textContent = '应用中…';
+    vscode.postMessage({
+      type: 'applyApiKey',
+      provider: providerSelect.value,
+      apiKey,
+      endpoint: endpointInput.value.trim(),
+      model: modelInput.value.trim(),
+    });
   });
 }
 
@@ -923,7 +1026,23 @@ window.addEventListener('message', (event) => {
       presetSelect.value = detectPreset(msg.provider, msg.endpoint, msg.model);
       // 按地址匹配预设列出候选模型，当前已填模型保持选中且不被覆盖
       const matched = presetByEndpoint(msg.endpoint);
-      populateModelSelect(matched ? matched.models : (msg.model ? [msg.model] : []));
+      populateModelSelect(matched ? matched.preset.models : (msg.model ? [msg.model] : []));
+      break;
+    case 'applyApiKeyResult':
+      applyKeyBtn.disabled = false;
+      applyKeyBtn.textContent = '应用';
+      state.provider = msg.provider || 'local';
+      state.hasApiKey = !!msg.hasApiKey;
+      state.canSummarize = !!msg.canSummarize;
+      renderCapability();
+      if (Array.isArray(msg.models) && msg.models.length > 0) {
+        populateModelSelect(msg.models);
+        showToast('API Key 已保存，检测到 ' + msg.models.length + ' 个模型', 'success');
+      } else if (msg.detectError) {
+        showToast('API Key 已保存（模型检测失败：' + msg.detectError + '）', 'info');
+      } else {
+        showToast('API Key 已保存', 'success');
+      }
       break;
     case 'detectModelsResult':
       detectModelsBtn.disabled = false;
