@@ -1084,15 +1084,27 @@ window.addEventListener('message', (event) => {
       apiKeyInput.value = msg.apiKey || '';
       endpointInput.value = msg.endpoint || '';
       modelInput.value = msg.model || '';
-      vendorSelect.value = vendorFromConfig(msg.provider, msg.endpoint, msg.model);
+      const vendor = vendorFromConfig(msg.provider, msg.endpoint, msg.model);
+      vendorSelect.value = vendor;
+      // 品牌预设但地址为空时，自动补默认地址（方便点「检测模型」，不影响后端默认逻辑）
+      if (!endpointInput.value.trim() && PRESETS[vendor]) {
+        endpointInput.value = PRESETS[vendor].endpoint;
+      }
       // 已保存过 Key 的显示「已应用」绿色状态
       appliedKey = msg.apiKey || '';
       updateApplyBtnState();
       // 加载完成后视为干净状态：保存按钮灰色
       markSettingsClean();
-      // 按地址匹配预设列出候选模型，当前已填模型保持选中且不被覆盖
-      const matched = presetByEndpoint(msg.endpoint);
-      populateModelSelect(matched ? matched.preset.models : (msg.model ? [msg.model] : []));
+      // 候选模型：地址匹配预设 → 品牌模型列表；否则用供应商预设的模型列表
+      const matched = presetByEndpoint(endpointInput.value);
+      const candidates = matched
+        ? matched.preset.models
+        : PRESETS[vendor]
+          ? PRESETS[vendor].models
+          : msg.model
+            ? [msg.model]
+            : [];
+      populateModelSelect(candidates);
       break;
     case 'applyApiKeyResult':
       setSettingsBusy(false);
