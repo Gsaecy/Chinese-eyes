@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { Translator, TranslationConfig } from './translator';
-import { queryExtensions, reorderByRelevance } from './marketplaceApi';
+import { queryExtensions, reorderByRelevance, sortItemsBy } from './marketplaceApi';
 import { ExtensionItem } from './types';
 import { ExtensionDetailPanel } from './extensionDetailPanel';
 import { icon } from './icons';
@@ -20,7 +20,7 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
   private _context: vscode.ExtensionContext;
 
   private _query = '';
-  private _sortBy: 'relevance' | 'installCount' | 'rating' | 'publishedDate' = 'installCount';
+  private _sortBy: 'relevance' | 'popular' | 'downloads' | 'rating' | 'publishedDate' = 'popular';
   private _sortExplicit = false;
   private _page = 1;
   private _hasMore = true;
@@ -191,9 +191,9 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
           this._items = [];
           this._page = 1;
           this._hasMore = true;
-          this._sortBy = 'installCount';
+          this._sortBy = 'popular';
           this._sortExplicit = false;
-          this.postMessage({ type: 'welcome', sortBy: 'installCount' });
+          this.postMessage({ type: 'welcome', sortBy: 'popular' });
           break;
 
         case 'openTranslator':
@@ -249,7 +249,12 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
       });
 
       // 异步翻译每个扩展的简介（不阻塞列表展示）
-      const newItems = reset ? reorderByRelevance(extensions, query) : extensions;
+      // 先按本地真实数值排序（下载量/评分/最新），再做相关性分层：
+      // 「相关」模式按匹配度精细排序；其他模式保持真实排名、只把无关项移到底部
+      const sorted = reset ? sortItemsBy(extensions, this._sortBy) : extensions;
+      const newItems = reset
+        ? reorderByRelevance(sorted, query, this._sortBy !== 'relevance')
+        : sorted;
       this._items = reset ? newItems : this._items.concat(newItems);
       this._hasMore = this._items.length < total && extensions.length > 0;
 
@@ -296,9 +301,11 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
 ${APPLE_CSS}
 /* ===== 侧边栏布局 ===== */
 body{padding:12px;font-size:13px}
-.header{display:flex;flex-direction:column;gap:10px;margin-bottom:12px}
+.header{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
 .search-row{display:flex;gap:6px;align-items:center}
 .search-row .ap-input{flex:1;min-width:0}
+.toolbar{display:flex;gap:6px;align-items:center}
+.toolbar .spacer{flex:1}
 .capability-bar{display:flex;gap:14px;align-items:center;padding:2px 8px;font-size:10.5px;color:var(--text-weak)}
 .capability-bar .dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:4px;vertical-align:1px}
 .capability-bar .dot.g{background:#34c759}
@@ -343,16 +350,19 @@ body{padding:12px;font-size:13px}
 <body>
 <div class="header">
   <div class="search-row">
-    <button id="homeBtn" class="ap-btn ap-btn-icon" title="返回主页">${icon('home')}</button>
     <input id="searchInput" class="ap-input" type="text" placeholder="搜索扩展名 / 关键词...">
     <button id="clearSearchBtn" class="ap-btn ap-btn-icon" title="清除搜索" style="display:none">${icon('clear')}</button>
     <button id="searchBtn" class="ap-btn ap-btn-primary">${icon('search')}<span>搜索</span></button>
-    <button id="translatorBtn" class="ap-btn ap-btn-icon" title="打开翻译面板">${icon('globe')}</button>
+  </div>
+  <div class="toolbar">
+    <button id="homeBtn" class="ap-btn ap-btn-icon" title="返回主页">${icon('home')}</button>
+    <button id="translatorBtn" class="ap-btn ap-btn-ghost">${icon('globe')}<span>手动翻译</span></button>
     <button id="settingsBtn" class="ap-btn ap-btn-icon" title="设置">${icon('settings')}</button>
     <button id="closePanelBtn" class="ap-btn ap-btn-icon" title="关闭侧边栏">${icon('close')}</button>
   </div>
   <div class="ap-seg" id="sortSeg">
-    <span class="sort-chip" data-sort="installCount">热门</span>
+    <span class="sort-chip" data-sort="popular">热门</span>
+    <span class="sort-chip" data-sort="downloads">下载量</span>
     <span class="sort-chip" data-sort="rating">评分</span>
     <span class="sort-chip" data-sort="publishedDate">最新</span>
     <span class="sort-chip" data-sort="relevance">相关</span>
@@ -456,7 +466,7 @@ const sortChips = document.querySelectorAll('.sort-chip');
 // 与扩展侧 icons.ts 一致的简洁线性 SVG 图标
 const ICON_GLOBE = '<svg class="ico" viewBox="0 0 16 16" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.25"/><path d="M1.75 8h12.5"/><path d="M8 1.75a9.6 9.6 0 0 1 0 12.5"/></svg>';
 const ICON_GRID = '<svg class="ico" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="5.25" height="5.25" rx="1"/><rect x="8.75" y="2" width="5.25" height="5.25" rx="1"/><rect x="2" y="8.75" width="5.25" height="5.25" rx="1"/><rect x="8.75" y="8.75" width="5.25" height="5.25" rx="1"/></svg>';
-const ICON_SETTINGS = '<svg class="ico" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11"/><circle cx="6.25" cy="4" r="1.6"/><path d="M2.5 8h11"/><circle cx="10" cy="8" r="1.6"/><path d="M2.5 12h11"/><circle cx="6.75" cy="12" r="1.6"/></svg>';
+const ICON_SETTINGS = '<svg class="ico" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="1.8"/><circle cx="8" cy="8" r="4.6"/><path d="M8 1.3v2M8 12.7v2M1.3 8h2M12.7 8h2M3.3 3.3l1.4 1.4M11.3 11.3l1.4 1.4M12.7 3.3l-1.4 1.4M4.7 11.3l-1.4 1.4"/></svg>';
 const ICON_WARNING = '<svg class="ico" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.25 14.5 13.5h-13z"/><path d="M8 6.5v3.25"/><path d="M8 11.75h.01"/></svg>';
 
 function welcomeHtml(){
@@ -496,7 +506,7 @@ let state = {
   hasMore: false,
   loading: false,
   query: '',
-  sortBy: 'installCount',
+  sortBy: 'popular',
   descMap: {},
 };
 

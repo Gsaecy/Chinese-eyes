@@ -148,13 +148,42 @@ export async function getExtensionDetail(publisher: string, name: string): Promi
   return extensions[0] ?? null;
 }
 
-/** 按关键词匹配度重排搜索结果（标题/ID 命中优先，其次描述、标签） */
-export function reorderByRelevance(items: ExtensionItem[], query: string): ExtensionItem[] {
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** 本地按真实数值排序（API 的排序值在带搜索词时不可靠） */
+export function sortItemsBy(items: ExtensionItem[], sortBy?: string): ExtensionItem[] {
+  if (!items || items.length < 2) return items;
+  switch (sortBy) {
+    case 'downloads':
+    case 'installCount':
+      return [...items].sort((a, b) => b.installCount - a.installCount);
+    case 'rating':
+      return [...items].sort(
+        (a, b) => (b.ratingScore - a.ratingScore) || (b.ratingCount - a.ratingCount)
+      );
+    case 'publishedDate':
+      return [...items].sort((a, b) => (b.lastUpdated || '').localeCompare(a.lastUpdated || ''));
+    default:
+      return items;
+  }
+}
+
+/**
+ * 按关键词匹配度重排搜索结果。
+ * @param preserveOrder true=稳定分层（相关项保持 API 原序在前、无关项移到后面，适合下载量/评分等排序模式）；false=按匹配度精细排序（适合「相关」模式）
+ */
+export function reorderByRelevance(items: ExtensionItem[], query: string, preserveOrder = false): ExtensionItem[] {
   const words = query
     .toLowerCase()
     .split(/\s+/)
     .filter((w) => w.length > 1);
   if (!words.length || items.length < 2) return items;
+
+  // 单词边界匹配，避免 'javascript' 命中 'java'、'postcss' 命中 'css' 之类的子串误判
+  const wordHit = (target: string, w: string): boolean =>
+    new RegExp('\\b' + escapeRegExp(w) + '\\b', 'i').test(target);
 
   const score = (item: ExtensionItem): number => {
     const name = (item.displayName || '').toLowerCase();
@@ -165,12 +194,25 @@ export function reorderByRelevance(items: ExtensionItem[], query: string): Exten
     let s = 0;
     for (const w of words) {
       if (extName === w || id === w) s += 10;
-      else if (name.includes(w) || id.includes(w)) s += 5;
-      if (desc.includes(w)) s += 2;
-      if (tags.includes(w)) s += 1;
+      else if (wordHit(name, w) || wordHit(id, w)) s += 5;
+      if (wordHit(desc, w)) s += 2;
+      if (wordHit(tags, w)) s += 1;
     }
     return s;
   };
+
+  if (preserveOrder) {
+    // 稳定分层（V8 sort 稳定，同层保持 API 真实排名顺序）：
+    // 标题/ID 含词 > 仅描述/标签含词 > 完全无关
+    const titleHit = (item: ExtensionItem): boolean => {
+      const name = (item.displayName || '').toLowerCase();
+      const extName = (item.extensionName || '').toLowerCase();
+      const id = item.id.toLowerCase();
+      return words.some((w) => extName === w || id === w || wordHit(name, w) || wordHit(id, w));
+    };
+    const tier = (item: ExtensionItem): number => (titleHit(item) ? 2 : score(item) > 0 ? 1 : 0);
+    return [...items].sort((a, b) => tier(b) - tier(a));
+  }
   return [...items].sort((a, b) => score(b) - score(a));
 }
 
@@ -250,14 +292,17 @@ function rawToExtensionItem(raw: RawGalleryExtension): ExtensionItem {
 function getSortByValue(sortBy?: string): number {
   switch (sortBy) {
     case 'installCount':
-      return 4; // InstallCount
+    case 'downloads':
+      return 4; // InstallCount（下载量/安装量）
     case 'rating':
-      return 12; // AverageRating
+      return 6; // AverageRating（真实平均评分从高到低）
+    case 'popular':
+      return 12; // WeightedRating（评分×评分数加权热度）
     case 'publishedDate':
-      return 10; // PublishedDate
+      return 10; // PublishedDate（最新发布）
     case 'relevance':
     default:
-      return 0; // Relevance
+      return 0; // Relevance（相关性）
   }
 }
 

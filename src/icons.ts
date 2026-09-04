@@ -30,7 +30,7 @@ const PATHS: Record<IconName, string> = {
   globe:
     '<circle cx="8" cy="8" r="6.25"/><path d="M1.75 8h12.5"/><path d="M8 1.75a9.6 9.6 0 0 1 0 12.5"/>',
   settings:
-    '<path d="M2.5 4h11"/><circle cx="6.25" cy="4" r="1.6"/><path d="M2.5 8h11"/><circle cx="10" cy="8" r="1.6"/><path d="M2.5 12h11"/><circle cx="6.75" cy="12" r="1.6"/>',
+    '<circle cx="8" cy="8" r="1.8"/><circle cx="8" cy="8" r="4.6"/><path d="M8 1.3v2M8 12.7v2M1.3 8h2M12.7 8h2M3.3 3.3l1.4 1.4M11.3 11.3l1.4 1.4M12.7 3.3l-1.4 1.4M4.7 11.3l-1.4 1.4"/>',
   close: '<path d="M4.25 4.25l7.5 7.5M11.75 4.25l-7.5 7.5"/>',
   download:
     '<path d="M8 2.5v7.5"/><path d="M4.75 7.25 8 10.5l3.25-3.25"/><path d="M2.5 13.5h11"/>',

@@ -105,5 +105,5 @@ export interface MarketplaceQueryOptions {
   pageNumber?: number;
   pageSize?: number;
   category?: string;
-  sortBy?: 'installCount' | 'rating' | 'publishedDate' | 'relevance';
+  sortBy?: 'relevance' | 'popular' | 'downloads' | 'rating' | 'publishedDate' | 'installCount';
 }
