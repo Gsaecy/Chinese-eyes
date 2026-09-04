@@ -851,6 +851,13 @@ if (clearSearchBtn) {
 /**********************/
 
 saveSettingsBtn.addEventListener('click', () => {
+  // 校验：填了 API Key 但没选 Agent 预设、没填地址、提供商还是本地时，提醒用户先选 Agent
+  const hasKey = !!apiKeyInput.value.trim();
+  if (hasKey && presetSelect.value === 'custom' && !endpointInput.value.trim() && providerSelect.value === 'local') {
+    showToast('请选择 Agent：在上方「Agent 预设」中选择（如 DeepSeek / 阿里云 / Kimi），保存后翻译才能生效', 'error');
+    presetSelect.focus();
+    return;
+  }
   saveSettingsBtn.disabled = true;
   saveSettingsBtn.textContent = '保存中…';
   vscode.postMessage({
