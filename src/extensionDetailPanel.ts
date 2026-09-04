@@ -105,6 +105,13 @@ export class ExtensionDetailPanel {
       // 将原文 README 发送到 webview 显示
       if (this._originalReadme) {
         this.post({ type: 'originalReadme', content: this._originalReadme });
+        // 「打开详情时自动翻译」默认开启：直接翻译并显示，无需再点按钮
+        const autoTranslate = vscode.workspace
+          .getConfiguration('chineseEyes')
+          .get('autoTranslateReadme', true);
+        if (autoTranslate) {
+          this.handleTranslateReadme();
+        }
       }
     } catch (err: any) {
       // README 获取失败不影响使用，AI 总结会使用 description
