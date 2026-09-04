@@ -683,7 +683,7 @@ export async function checkModel(
             max_tokens: 1,
           }),
         },
-        8000
+        5000
       );
       if (res.ok) {
         return { ok: true };

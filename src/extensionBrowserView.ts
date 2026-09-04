@@ -228,24 +228,30 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
 
         case 'saveSettings': {
           try {
-            await this.persistSettings(
-              msg.provider || 'deepseek',
-              msg.apiKey || '',
-              msg.endpoint || '',
-              msg.model || ''
-            );
+            const provider = msg.provider || 'deepseek';
+            const endpoint = String(msg.endpoint || '').trim();
+            const model = String(msg.model || '').trim();
+            const apiKey = String(msg.apiKey || '').trim();
+            await this.persistSettings(provider, apiKey, endpoint, model);
             const cfg = this.syncConfig();
-            this.verifyModelInBackground(
-              msg.provider || 'deepseek',
-              msg.endpoint || '',
-              msg.model || '',
-              msg.apiKey || ''
-            );
+
+            // 同步校验模型：错误时前端留在设置页，方便用户继续修改
+            let modelOk: boolean | null = null;
+            let modelError = '';
+            if ((provider === 'deepseek' || provider === 'openai-compatible') && apiKey && model) {
+              const defaultEndpoint = provider === 'deepseek' ? 'https://api.deepseek.com' : 'https://api.openai.com';
+              const r = await checkModel(endpoint || defaultEndpoint, model, apiKey);
+              modelOk = r.ok;
+              modelError = r.error || '';
+            }
+
             this.postMessage({
               type: 'settingsSaved',
               provider: cfg.provider,
               hasApiKey: !!cfg.apiKey,
               canSummarize: this._translator.canSummarize(),
+              modelOk,
+              modelError,
             });
           } catch (err: any) {
             const raw = err.message || String(err);
@@ -1338,9 +1344,14 @@ window.addEventListener('message', (event) => {
       state.hasApiKey = !!msg.hasApiKey;
       state.canSummarize = !!msg.canSummarize;
       renderCapability();
-      setSettingsPageVisible(false);
-      showToast('设置已保存', 'success');
-      // 不自动重新搜索，避免保存后跳转到热门列表页
+      if (msg.modelOk === false) {
+        // 模型无效：留在设置页，显示红字标识，方便用户继续修改
+        setModelStatus('bad');
+        showToast('设置已保存，但模型「' + modelInput.value.trim() + '」无效：' + (msg.modelError || '未知错误') + '。请修改模型后重新保存。', 'error');
+      } else {
+        setSettingsPageVisible(false);
+        showToast('设置已保存', 'success');
+      }
       break;
     case 'error':
       state.loading = false;
