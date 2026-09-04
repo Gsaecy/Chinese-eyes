@@ -390,47 +390,63 @@ export class Translator {
     maxTokens: number,
     timeoutMs: number = 30000,
   ): Promise<string> {
-    const response = await fetchWithTimeout(
-      `${endpoint}/v1/chat/completions`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.config.apiKey}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userContent },
-          ],
-          temperature,
-          max_tokens: maxTokens,
-        }),
-      },
-      timeoutMs,
-    );
+    const body = (extraSystemPrompt?: string) => ({
+      model,
+      messages: [
+        { role: 'system', content: extraSystemPrompt ? systemPrompt + '\n' + extraSystemPrompt : systemPrompt },
+        { role: 'user', content: userContent },
+      ],
+      temperature,
+      max_tokens: maxTokens,
+    });
 
-    const result = await response.json() as {
-      error?: { message?: string };
-      choices?: Array<{ message?: { content?: string; reasoning_content?: string }; text?: string }>;
-      output_text?: string;
-    };
-    if (result.error) {
-      throw new Error(result.error.message || JSON.stringify(result.error));
-    }
-    const first = result.choices?.[0];
-    const content: string | undefined =
-      first?.message?.content ?? first?.text ?? result.output_text;
-    if (!content) {
-      // reasoning 模型把内容放在 reasoning_content 里，给用户明确指引
-      if (first?.message?.reasoning_content) {
-        throw new Error('模型返回的是推理内容（reasoning 模型）。请在设置中换成对话模型，如 deepseek-chat / qwen-plus / gpt-4o-mini。');
+    const call = async (extra?: string) => {
+      const response = await fetchWithTimeout(
+        `${endpoint}/v1/chat/completions`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.config.apiKey}`,
+          },
+          body: JSON.stringify(body(extra)),
+        },
+        timeoutMs,
+      );
+      const result = await response.json() as {
+        error?: { message?: string };
+        choices?: Array<{ message?: { content?: string; reasoning_content?: string }; text?: string }>;
+        output_text?: string;
+      };
+      if (result.error) {
+        throw new Error(result.error.message || JSON.stringify(result.error));
       }
-      console.warn('[chineseEyes] LLM 返回空内容，原始响应:', JSON.stringify(result).slice(0, 500));
+      const first = result.choices?.[0];
+      return {
+        content: first?.message?.content ?? first?.text ?? result.output_text,
+        reasoning: first?.message?.reasoning_content,
+      };
+    };
+
+    let out = await call();
+    if (!out.content && out.reasoning) {
+      // reasoning 模型：重试一次，明确要求只输出最终答案
+      try {
+        out = await call('【重要】请直接输出最终答案，不要输出任何思考过程或推理内容。');
+      } catch (e) {
+        console.warn('[chineseEyes] reasoning 模型重试失败:', e);
+      }
+    }
+    if (!out.content && out.reasoning) {
+      // 兜底：模型始终只给思考过程，用其内容避免完全失败
+      console.warn('[chineseEyes] reasoning 模型仅返回思考过程，使用其内容兜底');
+      return String(out.reasoning).trim();
+    }
+    if (!out.content) {
+      console.warn('[chineseEyes] LLM 返回空内容，原始响应:', JSON.stringify(out).slice(0, 500));
       return '';
     }
-    return String(content).trim();
+    return String(out.content).trim();
   }
 
   private async callTranslationAPI(texts: string[]): Promise<string[]> {
