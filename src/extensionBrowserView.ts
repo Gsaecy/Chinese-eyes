@@ -462,8 +462,28 @@ body{padding:12px;font-size:13px}
 .welcome-content .mark{width:56px;height:56px;border-radius:14px;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;margin:0 auto 14px}
 .welcome-content h2{font-size:16px;font-weight:700;margin-bottom:8px;color:var(--text);letter-spacing:-.01em}
 .welcome-content p{font-size:12.5px;color:var(--text-sub);margin-bottom:18px;line-height:1.6}
-.help-box{margin-top:12px;padding:12px;background:rgba(52,199,89,.08);border:1px solid rgba(52,199,89,.35);border-radius:var(--radius-m);font-size:11px;line-height:1.8;color:var(--text)}
-.help-box strong{color:#34c759;display:inline-flex;align-items:center;gap:4px}
+/* ===== 首页（欢迎页） ===== */
+.home-wrap{padding:2px}
+.home-hero{text-align:center;padding:20px 8px 14px}
+.home-hero .mark{width:60px;height:60px;border-radius:16px;background:linear-gradient(135deg,var(--accent),#5e5ce6);color:#fff;display:flex;align-items:center;justify-content:center;margin:0 auto 10px;box-shadow:0 8px 20px rgba(0,122,255,.28)}
+.home-hero h2{font-size:16px;font-weight:700;letter-spacing:-.01em;margin-bottom:5px}
+.home-hero p{font-size:11.5px;color:var(--text-sub);line-height:1.65}
+.home-features{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0}
+.home-feat{background:var(--card);border:1px solid var(--line);border-radius:var(--radius-m);padding:10px;display:flex;flex-direction:column;gap:5px;box-shadow:var(--shadow)}
+.home-feat .fi{color:var(--accent)}
+.home-feat .ft{font-size:11.5px;font-weight:600}
+.home-feat .fd{font-size:10px;color:var(--text-sub);line-height:1.55}
+.home-guide{margin:10px 0;padding:12px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius-m);box-shadow:var(--shadow)}
+.home-guide h3{font-size:12px;font-weight:700;margin-bottom:9px;letter-spacing:-.01em}
+.home-step{display:flex;gap:8px;margin-bottom:8px}
+.home-step:last-child{margin-bottom:0}
+.home-step .num{width:18px;height:18px;border-radius:50%;background:var(--accent);color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+.home-step .st{font-size:11px;color:var(--text-sub);line-height:1.65}
+.home-footer{margin-top:10px;padding:12px;background:var(--chip-bg);border-radius:var(--radius-m)}
+.home-footer h3{font-size:12px;font-weight:700;margin-bottom:8px}
+.home-link{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--accent);cursor:pointer;text-decoration:none;margin-bottom:8px}
+.home-link:hover{text-decoration:underline}
+.home-pro{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--text-sub);flex-wrap:wrap;line-height:1.6}
 </style>
 </head>
 <body>
@@ -547,20 +567,7 @@ body{padding:12px;font-size:13px}
   </div>
 </div>
 
-<div id="listArea">
-  <div class="welcome-area" id="welcomeArea">
-    <div class="welcome-content">
-      <div class="mark">${icon('globe', 26)}</div>
-      <h2>欢迎使用扩展选择助手</h2>
-      <p>AI 智能总结 + 翻译，帮助你快速了解 VS Code 扩展</p>
-      <button id="loadExtensionsBtn" class="ap-btn ap-btn-primary">${icon('grid')}<span class="lbl">浏览扩展</span></button>
-      <div style="margin-top:16px;font-size:12px;color:var(--text-sub)">
-        <strong style="color:#ff9500;display:inline-flex;align-items:center;gap:4px">${icon('warning', 12)} 首次使用请先配置 API Key</strong><br>
-        点击右上角 ${icon('settings', 12)} 设置 → 选择预设 → 填入 Key
-      </div>
-    </div>
-  </div>
-</div>
+<div id="listArea"></div>
 
 <div class="toast" id="toast"></div>
 
@@ -594,24 +601,51 @@ const sortChips = document.querySelectorAll('.sort-chip');
 const ICON_GLOBE = '<svg class="ico" viewBox="0 0 16 16" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.25"/><path d="M1.75 8h12.5"/><path d="M8 1.75a9.6 9.6 0 0 1 0 12.5"/></svg>';
 const ICON_GRID = '<svg class="ico" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="5.25" height="5.25" rx="1"/><rect x="8.75" y="2" width="5.25" height="5.25" rx="1"/><rect x="2" y="8.75" width="5.25" height="5.25" rx="1"/><rect x="8.75" y="8.75" width="5.25" height="5.25" rx="1"/></svg>';
 const ICON_SETTINGS = '<svg class="ico" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="1.8"/><circle cx="8" cy="8" r="4.6"/><path d="M8 1.3v2M8 12.7v2M1.3 8h2M12.7 8h2M3.3 3.3l1.4 1.4M11.3 11.3l1.4 1.4M12.7 3.3l-1.4 1.4M4.7 11.3l-1.4 1.4"/></svg>';
+const ICON_SEARCH = '<svg class="ico" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5 14 14"/></svg>';
+const ICON_GLOBE_S = '<svg class="ico" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.25"/><path d="M1.75 8h12.5"/><path d="M8 1.75a9.6 9.6 0 0 1 0 12.5"/></svg>';
+const ICON_SPARKLE_S = '<svg class="ico" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.25 9.55 6.45 13.75 8 9.55 9.55 8 13.75 6.45 9.55 2.25 8 6.45 6.45 8 2.25z"/></svg>';
+const ICON_SETTINGS_S = '<svg class="ico" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="1.8"/><circle cx="8" cy="8" r="4.6"/><path d="M8 1.3v2M8 12.7v2M1.3 8h2M12.7 8h2M3.3 3.3l1.4 1.4M11.3 11.3l1.4 1.4M12.7 3.3l-1.4 1.4M4.7 11.3l-1.4 1.4"/></svg>';
+const ICON_STAR = '<svg class="ico" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.75l1.85 3.75 4.15.6-3 2.93.7 4.12L8 11.16l-3.7 1.99.7-4.12-3-2.93 4.15-.6L8 1.75z"/></svg>';
 const ICON_WARNING = '<svg class="ico" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.25 14.5 13.5h-13z"/><path d="M8 6.5v3.25"/><path d="M8 11.75h.01"/></svg>';
 
 function welcomeHtml(){
-  return '<div class="welcome-area">'
-    + '<div class="welcome-content">'
+  return '<div class="home-wrap">'
+    + '<div class="home-hero">'
     + '<div class="mark">' + ICON_GLOBE + '</div>'
-    + '<h2>欢迎使用扩展选择助手</h2>'
-    + '<p>AI 智能总结 + 翻译，帮助你快速了解 VS Code 扩展</p>'
+    + '<h2>扩展选择助手</h2>'
+    + '<p>看透外文扩展，选对每个插件</p>'
     + '<button id="loadExtensionsBtn" class="ap-btn ap-btn-primary">' + ICON_GRID + '<span class="lbl">浏览扩展</span></button>'
-    + '<div style="margin-top:16px;font-size:12px;color:var(--text-sub)">'
-    + '<strong style="color:#ff9500;display:inline-flex;align-items:center;gap:4px">' + ICON_WARNING + ' 首次使用请先配置 API Key</strong><br>'
-    + '点击右上角 ' + ICON_SETTINGS + ' 设置 → 选择预设 → 填入 Key'
-    + '</div></div></div>';
+    + '</div>'
+    + '<div class="home-features">'
+    + '<div class="home-feat"><span class="fi">' + ICON_SEARCH + '</span><span class="ft">精准搜索</span><span class="fd">关键词相关度排序，五维筛选</span></div>'
+    + '<div class="home-feat"><span class="fi">' + ICON_GLOBE_S + '</span><span class="ft">免费翻译</span><span class="fd">有道/Google 免 Key，自动生效</span></div>'
+    + '<div class="home-feat"><span class="fi">' + ICON_SPARKLE_S + '</span><span class="ft">AI 总结</span><span class="fd">配置 Key 后生成中文摘要</span></div>'
+    + '<div class="home-feat"><span class="fi">' + ICON_SETTINGS_S + '</span><span class="ft">一键配置</span><span class="fd">供应商预设，模型自动检测</span></div>'
+    + '</div>'
+    + '<div class="home-guide">'
+    + '<h3>快速上手</h3>'
+    + '<div class="home-step"><span class="num">1</span><span class="st">搜索框输入关键词，或 publisher.name 精确搜索</span></div>'
+    + '<div class="home-step"><span class="num">2</span><span class="st">点「详情」看 README 全文翻译；点「AI 总结」看中文摘要</span></div>'
+    + '<div class="home-step"><span class="num">3</span><span class="st">点齿轮设置：选 Agent 供应商 → 填 Key → 应用</span></div>'
+    + '</div>'
+    + '<div class="home-footer">'
+    + '<h3>支持与更新</h3>'
+    + '<a class="home-link" data-url="https://github.com/Gsaecy/Chinese-eyes">' + ICON_STAR + ' GitHub 点赞支持开发者</a>'
+    + '<div class="home-pro"><span class="ap-badge orange">PRO 预告</span><span>更多供应商预设 · 批量翻译 · 术语库，即将推出</span></div>'
+    + '</div>'
+    + '</div>';
 }
 
 function renderWelcome(){
   listArea.innerHTML = welcomeHtml();
   bindLoadBtn();
+  // 绑定首页链接（打开外部网页）
+  listArea.querySelectorAll('a[data-url]').forEach((a) => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      vscode.postMessage({ type: 'openUrl', url: a.getAttribute('data-url') });
+    });
+  });
 }
 
 function bindLoadBtn(){
