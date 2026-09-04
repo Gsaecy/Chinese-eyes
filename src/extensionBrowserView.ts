@@ -481,8 +481,8 @@ body{padding:12px;font-size:13px}
     <div class="hint">点「应用」立即保存 Key 并检测模型；本地词典不需要 Key</div>
   </div>
   <div class="ap-field">
-    <label>API 地址（选预设后自动填充，可改）</label>
-    <input type="text" id="endpointInput" class="ap-input" placeholder="如 https://api.deepseek.com 或 https://api.openai.com">
+    <label>API 地址（选品牌自动填充；仅「自定义」需手动填）</label>
+    <input type="text" id="endpointInput" class="ap-input" placeholder="选择自定义供应商后填写，如 https://api.deepseek.com" disabled>
   </div>
   <div class="ap-field">
     <label>模型（预设/检测自动列出，也可手动输入）</label>
@@ -834,16 +834,18 @@ if (vendorSelect) {
       if (!modelInput.value.trim()) modelInput.value = p.model;
       populateModelSelect(p.models);
     }
+    updateEndpointInputState();
     markSettingsDirty();
   });
 }
 
-// 手动输入地址时：匹配品牌则同步供应商选择并列出模型，否则切到自定义
+// 手动输入地址时（仅自定义模式）：匹配品牌则同步供应商选择并锁定地址框，否则保持自定义
 if (endpointInput) {
   endpointInput.addEventListener('input', () => {
     const m = presetByEndpoint(endpointInput.value);
     if (m) {
       vendorSelect.value = m.key;
+      updateEndpointInputState();
       populateModelSelect(m.preset.models);
     } else if (endpointInput.value.trim()) {
       vendorSelect.value = 'custom';
@@ -894,6 +896,15 @@ function updateSaveBtnState(){
   saveSettingsBtn.classList.toggle('ap-btn-primary', settingsDirty);
 }
 
+/** 地址输入框：品牌/本地/仅翻译供应商由预设自动填充并锁定，只有「自定义」可手动填 */
+function updateEndpointInputState(){
+  const isCustom = vendorSelect.value === 'custom';
+  endpointInput.disabled = !isCustom;
+  endpointInput.placeholder = isCustom
+    ? '输入自定义 API 地址，如 https://api.deepseek.com'
+    : '地址由供应商预设自动填充';
+}
+
 function markSettingsDirty(){
   settingsDirty = true;
   updateSaveBtnState();
@@ -920,6 +931,7 @@ function setSettingsBusy(busy){
     saveSettingsBtn.textContent = '保存';
     updateApplyBtnState();
     updateSaveBtnState();
+    updateEndpointInputState();
   }
 }
 
@@ -1090,6 +1102,7 @@ window.addEventListener('message', (event) => {
       if (!endpointInput.value.trim() && PRESETS[vendor]) {
         endpointInput.value = PRESETS[vendor].endpoint;
       }
+      updateEndpointInputState();
       // 已保存过 Key 的显示「已应用」绿色状态
       appliedKey = msg.apiKey || '';
       updateApplyBtnState();
