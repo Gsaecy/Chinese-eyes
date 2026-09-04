@@ -583,7 +583,7 @@ function renderList(){
       vscode.postMessage({type:'loadMore'});
     });
   }
-  listArea.querySelectorAll('.card').forEach((card) => {
+  listArea.querySelectorAll('.ext-card').forEach((card) => {
     const id = card.getAttribute('data-id');
     card.querySelectorAll('button[data-act]').forEach((btn) => {
       btn.addEventListener('click', (e) => {
