@@ -629,7 +629,7 @@ function welcomeHtml(){
     + '</div>'
     + '<div class="home-footer">'
     + '<h3>支持与更新</h3>'
-    + '<a class="home-link" data-url="https://hongyuguo.com">' + ICON_EXTERNAL_S + ' 开发者主页 hongyuguo.com</a>'
+    + '<a class="home-link" data-url="https://www.hongyuguo.com/">' + ICON_EXTERNAL_S + ' 开发者主页 hongyuguo.com</a>'
     + '<a class="home-link" data-url="https://github.com/Gsaecy/Chinese-eyes">' + ICON_STAR + ' GitHub 点赞支持开发者</a>'
     + '<div class="home-pro"><span class="ap-badge orange">PRO 预告</span><span>更多供应商预设 · 批量翻译 · 术语库，即将推出</span></div>'
     + '</div>'
