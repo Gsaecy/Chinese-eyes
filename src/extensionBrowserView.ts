@@ -485,12 +485,13 @@ body{padding:12px;font-size:13px}
     <input type="text" id="endpointInput" class="ap-input" placeholder="选择自定义供应商后填写，如 https://api.deepseek.com" disabled>
   </div>
   <div class="ap-field">
-    <label>模型（预设/检测自动列出，也可手动输入）</label>
+    <label>模型（下拉选择常用模型，或直接输入自定义模型名）</label>
     <div class="model-row">
       <select id="modelSelect" class="ap-select" style="flex:1"></select>
       <button id="detectModelsBtn" class="ap-btn ap-btn-ghost ap-btn-sm" type="button" title="用 API 地址 + Key 检索可用模型列表">检测模型</button>
     </div>
-    <input type="text" id="modelInput" class="ap-input" placeholder="如 deepseek-chat、gpt-4o-mini、qwen-plus">
+    <input type="text" id="modelInput" class="ap-input" placeholder="当前模型；也可输入自定义模型名，保存时以这里为准">
+    <div class="hint">下拉框选择会同步到这里；手输任意模型名后保存即可生效</div>
   </div>
   <div class="settings-actions">
     <button class="ap-btn" id="saveSettingsBtn" disabled title="修改设置后可保存">保存</button>
