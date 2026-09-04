@@ -216,6 +216,16 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
           break;
         }
 
+        case 'verifyModel': {
+          this.verifyModelInBackground(
+            msg.provider || 'openai-compatible',
+            String(msg.endpoint || '').trim(),
+            String(msg.model || '').trim(),
+            String(msg.apiKey || '').trim()
+          );
+          break;
+        }
+
         case 'saveSettings': {
           try {
             await this.persistSettings(
@@ -296,7 +306,7 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
     await chConfig.update('apiModel', model, vscode.ConfigurationTarget.Global);
   }
 
-  /** 保存后后台校验模型名是否有效（LLM 供应商 + 已填 Key），无效时提醒用户 */
+  /** 保存后后台校验模型名是否有效（LLM 供应商 + 已填 Key），结果通知前端显示状态 */
   private verifyModelInBackground(provider: string, endpoint: string, model: string, apiKey: string): void {
     if (!(provider === 'deepseek' || provider === 'openai-compatible') || !apiKey || !model) {
       return;
@@ -304,8 +314,10 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
     const defaultEndpoint = provider === 'deepseek' ? 'https://api.deepseek.com' : 'https://api.openai.com';
     checkModel(endpoint || defaultEndpoint, model, apiKey)
       .then((r) => {
-        if (!r.ok) {
-          this.postMessage({ type: 'modelCheckResult', error: r.error || '模型不可用', model });
+        if (r.ok) {
+          this.postMessage({ type: 'modelCheckResult', ok: true, model });
+        } else {
+          this.postMessage({ type: 'modelCheckResult', ok: false, error: r.error || '模型不可用', model });
         }
       })
       .catch((e: any) => {
@@ -408,6 +420,11 @@ body{padding:12px;font-size:13px}
 .model-row{display:flex;gap:6px;align-items:center}
 .key-row{display:flex;gap:6px;align-items:center}
 .key-row .ap-input{flex:1;min-width:0}
+.model-input-row{display:flex;gap:6px;align-items:center}
+.model-input-row .ap-input{flex:1;min-width:0}
+.model-status{display:inline-flex;align-items:center;gap:4px;font-size:11px;flex-shrink:0;white-space:nowrap}
+.model-status.bad{color:#ff3b30}
+.model-status.good{color:#34c759}
 .capability-bar{display:flex;gap:14px;align-items:center;padding:2px 8px;font-size:10.5px;color:var(--text-weak)}
 .capability-bar .dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:4px;vertical-align:1px}
 .capability-bar .dot.g{background:#34c759}
@@ -512,7 +529,10 @@ body{padding:12px;font-size:13px}
       <select id="modelSelect" class="ap-select" style="flex:1"></select>
       <button id="detectModelsBtn" class="ap-btn ap-btn-ghost ap-btn-sm" type="button" title="用 API 地址 + Key 检索可用模型列表">检测模型</button>
     </div>
-    <input type="text" id="modelInput" class="ap-input" placeholder="当前模型；也可输入自定义模型名，保存时以这里为准">
+    <div class="model-input-row">
+      <input type="text" id="modelInput" class="ap-input" placeholder="当前模型；也可输入自定义模型名，保存时以这里为准">
+      <span id="modelStatus" class="model-status" style="display:none"></span>
+    </div>
     <div class="hint">下拉框选择会同步到这里；手输任意模型名后保存即可生效</div>
   </div>
   <div class="settings-actions">
@@ -558,6 +578,7 @@ const apiKeyInput = el('apiKeyInput');
 const modelSelect = el('modelSelect');
 const detectModelsBtn = el('detectModelsBtn');
 const applyKeyBtn = el('applyKeyBtn');
+const modelStatus = el('modelStatus');
 const endpointInput = el('endpointInput');
 const modelInput = el('modelInput');
 const saveSettingsBtn = el('saveSettingsBtn');
@@ -906,6 +927,31 @@ let busyTimer = null;
 let settingsDirty = false; // 设置面板是否有未保存的修改
 let modelsDetectedFor = ''; // 已自动检测过模型的 供应商|地址|Key，避免重复请求
 
+// 模型校验状态图标
+const ICON_WARN_TRI = '<svg class="ico" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="#ff9500" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.25 14.5 13.5h-13z"/><path d="M8 6.5v3.25"/><path d="M8 11.75h.01"/></svg>';
+const ICON_CHECK_GREEN = '<svg class="ico" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="#34c759" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.25"/><path d="M5.25 8.25l2 2 3.5-4"/></svg>';
+
+/** 模型校验状态：bad=黄色感叹+红字，good=绿圈对勾，checking=校验中，none=隐藏 */
+function setModelStatus(kind, text){
+  if (!modelStatus) return;
+  if (kind === 'bad') {
+    modelStatus.innerHTML = ICON_WARN_TRI + '<span>无法识别该模型</span>';
+    modelStatus.className = 'model-status bad';
+    modelStatus.style.display = 'inline-flex';
+  } else if (kind === 'good') {
+    modelStatus.innerHTML = ICON_CHECK_GREEN;
+    modelStatus.className = 'model-status good';
+    modelStatus.style.display = 'inline-flex';
+  } else if (kind === 'checking') {
+    modelStatus.innerHTML = '<span style="color:var(--text-weak)">校验中…</span>';
+    modelStatus.className = 'model-status';
+    modelStatus.style.display = 'inline-flex';
+  } else {
+    modelStatus.style.display = 'none';
+    modelStatus.className = 'model-status';
+  }
+}
+
 function updateApplyBtnState(){
   const key = apiKeyInput.value.trim();
   const isApplied = !!key && key === appliedKey;
@@ -932,6 +978,7 @@ function updateEndpointInputState(){
 function markSettingsDirty(){
   settingsDirty = true;
   updateSaveBtnState();
+  setModelStatus('none'); // 修改设置后清空旧校验状态
 }
 
 function markSettingsClean(){
@@ -986,6 +1033,7 @@ if (applyKeyBtn) {
     setSettingsBusy(true);
     applyKeyBtn.textContent = '应用中…';
     applyKeyBtn.classList.remove('ap-btn-success');
+    setModelStatus('checking');
     vscode.postMessage({
       type: 'applyApiKey',
       provider: vendorProvider(vendor),
@@ -1061,6 +1109,7 @@ saveSettingsBtn.addEventListener('click', () => {
   }
   setSettingsBusy(true);
   saveSettingsBtn.textContent = '保存中…';
+  setModelStatus('checking');
   vscode.postMessage({
     type: 'saveSettings',
     provider: vendorProvider(vendor),
@@ -1155,6 +1204,17 @@ window.addEventListener('message', (event) => {
           });
         }
       }
+      // 已配置 Key + 模型 → 自动校验模型有效性（绿勾/红字状态）
+      if (appliedKey && modelInput.value.trim() && PRESETS[vendor]) {
+        setModelStatus('checking');
+        vscode.postMessage({
+          type: 'verifyModel',
+          provider: vendorProvider(vendor),
+          endpoint: endpointInput.value.trim(),
+          model: modelInput.value.trim(),
+          apiKey: appliedKey,
+        });
+      }
       break;
     case 'applyApiKeyResult':
       setSettingsBusy(false);
@@ -1173,8 +1233,14 @@ window.addEventListener('message', (event) => {
       showToast('API Key 已应用' + (endpointInput.value.trim() ? '，正在后台检测模型…' : ''), 'success');
       break;
     case 'modelCheckResult':
-      // 保存/应用后模型校验失败：明确提醒用户模型名可能不正确
-      showToast('模型「' + (msg.model || '') + '」校验失败：' + (msg.error || '未知错误') + '。请检查模型名或点「检测模型」选择正确模型。', 'error');
+      // 校验结果与当前输入框模型一致才更新状态（用户可能已改）
+      if (msg.model && msg.model !== modelInput.value.trim()) break;
+      if (msg.ok) {
+        setModelStatus('good');
+      } else {
+        setModelStatus('bad');
+        showToast('模型「' + (msg.model || '') + '」校验失败：' + (msg.error || '未知错误') + '。请检查模型名或点「检测模型」选择正确模型。', 'error');
+      }
       break;
     case 'detectModelsResult':
       detectModelsBtn.disabled = false;
