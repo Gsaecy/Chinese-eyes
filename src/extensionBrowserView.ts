@@ -960,10 +960,34 @@ function updateApplyBtnState(){
   applyKeyBtn.classList.toggle('ap-btn-primary', !isApplied);
 }
 
-/** 保存按钮：有未保存修改 → 蓝色可点；无修改 → 灰色不可点 */
+/** 保存按钮：有未保存修改或有配置错误 → 蓝色可点；无修改无错误 → 灰色不可点 */
 function updateSaveBtnState(){
-  saveSettingsBtn.disabled = !settingsDirty;
-  saveSettingsBtn.classList.toggle('ap-btn-primary', settingsDirty);
+  const hasErrors = validateSettings().length > 0;
+  const active = settingsDirty || hasErrors;
+  saveSettingsBtn.disabled = !active;
+  saveSettingsBtn.classList.toggle('ap-btn-primary', active);
+}
+
+/** 校验当前设置，返回问题列表（含聚焦目标） */
+function validateSettings(){
+  const problems = [];
+  const vendor = vendorSelect.value;
+  const key = apiKeyInput.value.trim();
+  const model = modelInput.value.trim();
+  const endpoint = endpointInput.value.trim();
+  const isLLM = !!PRESETS[vendor] || vendor === 'custom';
+  const isTranslateOnly = vendor === 'deepl' || vendor === 'google' || vendor === 'libretranslate';
+
+  if (vendor === 'local') {
+    if (key) problems.push({ text: '当前供应商是「本地词典」，填了 API Key 也不会生效；如需用 Key 请先选择 LLM 品牌供应商', focus: vendorSelect });
+  } else if (isTranslateOnly) {
+    if (!key) problems.push({ text: '供应商「' + vendor + '」需要填写 API Key', focus: apiKeyInput });
+  } else if (isLLM) {
+    if (!key) problems.push({ text: '请填写 API Key', focus: apiKeyInput });
+    if (vendor === 'custom' && !endpoint) problems.push({ text: '「自定义」供应商请填写 API 地址', focus: endpointInput });
+    if (!model) problems.push({ text: '请选择或输入模型名称', focus: modelInput });
+  }
+  return problems;
 }
 
 /** 地址输入框：品牌/本地/仅翻译供应商由预设自动填充并锁定，只有「自定义」可手动填 */
@@ -1022,21 +1046,20 @@ modelInput.addEventListener('input', markSettingsDirty);
 // 应用按钮：单独保存 API Key 并自动检测模型（防止未点底部保存导致 Key 丢失）
 if (applyKeyBtn) {
   applyKeyBtn.addEventListener('click', () => {
-    const apiKey = apiKeyInput.value.trim();
-    if (!apiKey) { showToast('请先粘贴 API Key', 'error'); return; }
-    const vendor = vendorSelect.value;
-    if (vendor === 'local' || (vendor === 'custom' && !endpointInput.value.trim())) {
-      showToast('请选择 Agent 供应商：在上方下拉框选择品牌（如 DeepSeek / 阿里云 / Kimi），API Key 才能生效', 'error');
-      vendorSelect.focus();
+    const problems = validateSettings();
+    if (problems.length > 0) {
+      showToast('应用前请修正：' + problems.map((p) => p.text).join('；'), 'error');
+      problems[0].focus.focus();
       return;
     }
+    const apiKey = apiKeyInput.value.trim();
     setSettingsBusy(true);
     applyKeyBtn.textContent = '应用中…';
     applyKeyBtn.classList.remove('ap-btn-success');
     setModelStatus('checking');
     vscode.postMessage({
       type: 'applyApiKey',
-      provider: vendorProvider(vendor),
+      provider: vendorProvider(vendorSelect.value),
       apiKey,
       endpoint: endpointInput.value.trim(),
       model: modelInput.value.trim(),
@@ -1099,12 +1122,11 @@ if (clearSearchBtn) {
 /**********************/
 
 saveSettingsBtn.addEventListener('click', () => {
-  // 校验：填了 API Key 但供应商还是本地/自定义且无地址时，提醒用户先选 Agent 供应商
-  const hasKey = !!apiKeyInput.value.trim();
-  const vendor = vendorSelect.value;
-  if (hasKey && (vendor === 'local' || (vendor === 'custom' && !endpointInput.value.trim()))) {
-    showToast('请选择 Agent 供应商：在上方下拉框选择品牌（如 DeepSeek / 阿里云 / Kimi），保存后翻译才能生效', 'error');
-    vendorSelect.focus();
+  // 校验：有问题时提示具体哪项并聚焦，不保存
+  const problems = validateSettings();
+  if (problems.length > 0) {
+    showToast('保存前请修正：' + problems.map((p) => p.text).join('；'), 'error');
+    problems[0].focus.focus();
     return;
   }
   setSettingsBusy(true);
@@ -1112,7 +1134,7 @@ saveSettingsBtn.addEventListener('click', () => {
   setModelStatus('checking');
   vscode.postMessage({
     type: 'saveSettings',
-    provider: vendorProvider(vendor),
+    provider: vendorProvider(vendorSelect.value),
     apiKey: apiKeyInput.value.trim(),
     endpoint: endpointInput.value.trim(),
     model: modelInput.value.trim(),
@@ -1204,17 +1226,8 @@ window.addEventListener('message', (event) => {
           });
         }
       }
-      // 已配置 Key + 模型 → 自动校验模型有效性（绿勾/红字状态）
-      if (appliedKey && modelInput.value.trim() && PRESETS[vendor]) {
-        setModelStatus('checking');
-        vscode.postMessage({
-          type: 'verifyModel',
-          provider: vendorProvider(vendor),
-          endpoint: endpointInput.value.trim(),
-          model: modelInput.value.trim(),
-          apiKey: appliedKey,
-        });
-      }
+      // 模型校验状态只在保存/应用后显示；打开面板时清空指示图标
+      setModelStatus('none');
       break;
     case 'applyApiKeyResult':
       setSettingsBusy(false);
