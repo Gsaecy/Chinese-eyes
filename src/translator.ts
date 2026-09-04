@@ -293,24 +293,14 @@ export class Translator {
       }
     }
 
-    // 3. 兑底：块级免费/本地词典（可能部分翻译，明确提示）
-    const blocks = splitMarkdownBlocks(markdown);
-    const parts: string[] = [];
-    for (const block of blocks) {
-      if (block.type === 'raw') {
-        parts.push(block.text); // 代码块/表格/HTML 原样保留
-        continue;
-      }
-      const { stripped, prefixes } = stripMarkdownPrefixes(block.text);
-      let out: string | null = await this.tryFreeOnlineTranslate(stripped, proxyUrl);
-      if (!out || !isRealTranslation(stripped, out)) {
-        out = localTranslate(stripped);
-      }
-      parts.push(restoreMarkdownPrefixes(out, prefixes));
+    // 3. 兑底：免费整篇再试一次 → 失败则本地词典整篇翻译（不保持结构），明确提示
+    const free = await this.tryFreeOnlineTranslate(markdown, proxyUrl);
+    if (free && free.trim() && isRealTranslation(markdown, free)) {
+      return { text: free, warning: 'LLM API 当前不可用，已使用免费在线翻译' };
     }
     return {
-      text: parts.join('\n\n'),
-      warning: '翻译可能不完整：免费翻译受限且未配置可用 API。建议在设置中配置 API Key 获得完整翻译',
+      text: localTranslate(markdown),
+      warning: '翻译不完整：免费翻译受限且 LLM API 不可用，已使用本地词典（仅翻译常用词汇）。建议在设置中配置 API Key 获得完整翻译',
     };
   }
 
