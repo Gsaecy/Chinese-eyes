@@ -304,7 +304,7 @@ window.addEventListener('message', (event) => {
     case 'translateDone':
       translateBtn.disabled = false;
       translateBtn.innerHTML = ICON_SWAP + ' 翻译';
-      outputArea.innerHTML = esc(msg.translated).replace(/\n/g, '<br>');
+      outputArea.innerHTML = esc(msg.translated).replace(/\\n/g, '<br>');
       if (msg.warning) {
         warnNote.innerHTML = ICON_WARNING + '<span>' + esc(msg.warning) + '</span>';
         warnNote.style.display = 'flex';
@@ -324,7 +324,7 @@ window.addEventListener('message', (event) => {
     case 'summarizeDone':
       summarizeBtn.disabled = false;
       summarizeBtn.innerHTML = ICON_SPARKLE + ' AI 总结';
-      summaryBody.innerHTML = esc(msg.summary).replace(/\n/g, '<br>');
+      summaryBody.innerHTML = esc(msg.summary).replace(/\\n/g, '<br>');
       showToast('总结生成完成', 'success');
       break;
     case 'summarizeError':

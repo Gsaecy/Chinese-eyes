@@ -645,7 +645,7 @@ const PRESETS = {
 function detectPreset(provider, endpoint, model){
   for (const key of Object.keys(PRESETS)) {
     const p = PRESETS[key];
-    if (p.provider === provider && p.endpoint === (endpoint || '').replace(/\/+$/, '') && p.model === model) {
+    if (p.provider === provider && p.endpoint === (endpoint || '').replace(/\\/+$/, '') && p.model === model) {
       return key;
     }
   }
