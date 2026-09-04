@@ -260,16 +260,42 @@ export class Translator {
 
   /**
    * 翻译一段较长的 Markdown 文本（如 README）。
-   * 策略：结构保持翻译（代码块/表格/HTML 原样，只翻译文本，布局与原文一致）。
-   * 免费在线翻译优先 → 受次数/字数限制时才调用 LLM API → 本地词典兑底。
-   * API 默认只用于 AI 总结。
+   * 策略：短文档（≤1200 字符）免费在线翻译一次；长文档/免费受限 → 整篇 LLM 结构化翻译（保留代码块/表格/HTML 与标题结构）；失败兑底块级翻译。
+   * API 默认只用于 AI 总结，仅免费受限时参与翻译。
    */
   async translateMarkdown(markdown: string, proxyUrl?: string): Promise<{ text: string; warning?: string }> {
     if (!markdown || !markdown.trim()) return { text: markdown };
 
+    // 1. 短文档：免费在线翻译一次完成（不消耗 API 额度）
+    if (markdown.length <= 1200) {
+      const { stripped, prefixes } = stripMarkdownPrefixes(markdown);
+      const free = await this.tryFreeOnlineTranslate(stripped, proxyUrl);
+      if (free && isRealTranslation(stripped, free)) {
+        return { text: restoreMarkdownPrefixes(free, prefixes) };
+      }
+    }
+
+    // 2. 长文档/免费受限：整篇 LLM 结构化翻译（布局保持最佳，一次或几次请求）
+    if (this.isLLMProvider() && this.config.apiKey) {
+      const { endpoint, model } = this.resolveLLMConfig();
+      try {
+        const out = await this.translateMarkdownViaLLM(endpoint, model, markdown);
+        if (out) {
+          return {
+            text: out,
+            warning: markdown.length <= 1200
+              ? '免费在线翻译受次数限制，已自动改用 API 翻译'
+              : '文档超过免费翻译字数限制，已自动改用 API 翻译',
+          };
+        }
+      } catch (err) {
+        console.warn('[chineseEyes] LLM Markdown 翻译失败，降级到块级翻译:', err);
+      }
+    }
+
+    // 3. 兑底：块级免费/本地词典（可能部分翻译，明确提示）
     const blocks = splitMarkdownBlocks(markdown);
     const parts: string[] = [];
-    let usedApi = false;
     for (const block of blocks) {
       if (block.type === 'raw') {
         parts.push(block.text); // 代码块/表格/HTML 原样保留
@@ -278,19 +304,13 @@ export class Translator {
       const { stripped, prefixes } = stripMarkdownPrefixes(block.text);
       let out: string | null = await this.tryFreeOnlineTranslate(stripped, proxyUrl);
       if (!out || !isRealTranslation(stripped, out)) {
-        // 免费受次数/字数限制 → 块级调用 LLM（保持行结构）
-        out = await this.translateTextViaLLM(stripped);
-        if (out) usedApi = true;
-      }
-      if (!out || !isRealTranslation(stripped, out)) {
         out = localTranslate(stripped);
       }
       parts.push(restoreMarkdownPrefixes(out, prefixes));
     }
-    const text = parts.join('\n\n');
     return {
-      text,
-      warning: usedApi ? '免费在线翻译受次数/字数限制，已自动改用 API 翻译' : undefined,
+      text: parts.join('\n\n'),
+      warning: '翻译可能不完整：免费翻译受限且未配置可用 API。建议在设置中配置 API Key 获得完整翻译',
     };
   }
 
@@ -311,12 +331,25 @@ export class Translator {
     }
   }
 
-  /** 翻译 HTML 文档：只翻译文本节点，标签与属性原样保留，布局不变 */
+  /** 翻译 HTML 文档：短文档逐文本节点免费翻译；长文档整篇 LLM 翻译（标签/属性/布局原样） */
   async translateHtml(html: string, proxyUrl?: string): Promise<{ text: string; warning?: string }> {
     if (!html || !html.trim()) return { text: html };
-    let usedApi = false;
+
+    // 长文档：整篇 LLM 翻译，提示保留所有 HTML 标签与属性
+    if (html.length > 1200 && this.isLLMProvider() && this.config.apiKey) {
+      const { endpoint, model } = this.resolveLLMConfig();
+      try {
+        const out = await this.translateMarkdownViaLLM(endpoint, model, html);
+        if (out) {
+          return { text: out, warning: '文档超过免费翻译字数限制，已自动改用 API 翻译' };
+        }
+      } catch (err) {
+        console.warn('[chineseEyes] LLM HTML 翻译失败，降级到文本节点翻译:', err);
+      }
+    }
+
+    // 逐文本节点免费/本地翻译（短文档或 LLM 不可用时）
     const textNodes: string[] = [];
-    // 抽出标签之间的文本节点
     const skeleton = html.replace(/>([^<]+)</g, (_m, inner) => {
       const idx = textNodes.length;
       textNodes.push(inner);
@@ -327,20 +360,12 @@ export class Translator {
       if (!node.trim() || chineseRatio(node) > 0.3) continue; // 空节点/已是中文跳过
       let out: string | null = await this.tryFreeOnlineTranslate(node.trim(), proxyUrl);
       if (!out || !isRealTranslation(node.trim(), out)) {
-        out = await this.translateTextViaLLM(node.trim());
-        if (out) usedApi = true;
-      }
-      if (!out || !isRealTranslation(node.trim(), out)) {
         out = localTranslate(node.trim());
       }
       textNodes[i] = out;
     }
-    // 回填：占位符换回译文（去掉多余空白）
     const result = skeleton.replace(/\u0000(\d+)\u0000/g, (_m, idx) => textNodes[Number(idx)]);
-    return {
-      text: result,
-      warning: usedApi ? '免费在线翻译受次数/字数限制，已自动改用 API 翻译' : undefined,
-    };
+    return { text: result };
   }
 
   /** LLM 分段翻译 Markdown（长文分块避免超限/截断），失败抛出异常 */
