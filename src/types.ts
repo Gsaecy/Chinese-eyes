@@ -1,3 +1,11 @@
+/** settings.json 中 API Key 的掩码占位符（真实值存系统密钥库） */
+export const API_KEY_MASK = '••••••••••';
+
+/** 判断配置值是否为掩码占位（全部由黑点/星号组成） */
+export function isApiKeyMask(value: string): boolean {
+  return !!value && /^[•*]+$/.test(value.trim());
+}
+
 /** VS Code Marketplace API 返回的原始扩展数据类型 */
 export interface RawGalleryExtension {
   extensionId: string;

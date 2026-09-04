@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { ExtensionBrowserViewProvider } from './extensionBrowserView';
 import { Translator } from './translator';
 import { TranslatorPanel } from './translatorPanel';
+import { API_KEY_MASK, isApiKeyMask } from './types';
 
 let provider: ExtensionBrowserViewProvider | undefined;
 let translator: Translator | undefined;
@@ -11,25 +12,30 @@ export function activate(context: vscode.ExtensionContext) {
 
   try {
     const config = vscode.workspace.getConfiguration('chineseEyes');
+    const cfgKey = config.get('apiKey', '') as string;
     translator = new Translator({
       provider: config.get('translationProvider', 'local'),
-      apiKey: config.get('apiKey', ''), // 旧版明文兼容值，随后由密钥库覆盖
+      // 配置值若是掩码占位则传空，随后由密钥库注入真实值
+      apiKey: isApiKeyMask(cfgKey) ? '' : cfgKey,
       targetLanguage: 'zh-CN',
       customEndpoint: config.get('apiEndpoint', ''),
       customModel: config.get('apiModel', ''),
     });
 
-    // API Key 迁移到系统密钥库（SecretStorage），不再存 settings.json 明文
+    // API Key 迁移到系统密钥库（SecretStorage），settings.json 只留黑点掩码
     (async () => {
       try {
         const stored = await context.secrets.get('chineseEyes.apiKey');
         const legacy = config.get('apiKey', '') as string;
-        if (!stored && legacy) {
+        if (!stored && legacy && !isApiKeyMask(legacy)) {
+          // 旧版明文 → 搬进密钥库 + 回写掩码
           await context.secrets.store('chineseEyes.apiKey', legacy);
-          await config.update('apiKey', undefined, vscode.ConfigurationTarget.Global);
+          await config.update('apiKey', API_KEY_MASK, vscode.ConfigurationTarget.Global);
           console.log('[chineseEyes] 已将 API Key 从 settings.json 迁移至系统密钥库');
-        } else if (stored && stored !== legacy && translator) {
-          translator.updateConfig({
+        } else if (stored && !isApiKeyMask(legacy) && legacy !== stored) {
+          // 密钥库已有值、settings.json 还残留旧明文 → 以密钥库为准，回写掩码
+          await config.update('apiKey', API_KEY_MASK, vscode.ConfigurationTarget.Global);
+          translator!.updateConfig({
             provider: config.get('translationProvider', 'local'),
             apiKey: stored,
             targetLanguage: 'zh-CN',
@@ -72,20 +78,33 @@ export function activate(context: vscode.ExtensionContext) {
       })
     );
 
-    // 配置变更监听（API Key 从系统密钥库读取）
+    // 配置变更监听（API Key 从系统密钥库读取；用户在设置 UI 粘贴新 Key 时自动迁入）
     context.subscriptions.push(
       vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('chineseEyes') && translator) {
           const c = vscode.workspace.getConfiguration('chineseEyes');
-          context.secrets.get('chineseEyes.apiKey').then((key) => {
+          const cfgKey = String(c.get('apiKey', '') || '');
+          const applyConfig = (apiKey: string) => {
             translator!.updateConfig({
               provider: c.get('translationProvider', 'local'),
-              apiKey: key || c.get('apiKey', ''),
+              apiKey,
               targetLanguage: 'zh-CN',
               customEndpoint: c.get('apiEndpoint', ''),
               customModel: c.get('apiModel', ''),
             });
-          });
+          };
+          if (isApiKeyMask(cfgKey)) {
+            // 掩码占位（扩展自己回写的）→ 从密钥库取真实值
+            context.secrets.get('chineseEyes.apiKey').then((key) => applyConfig(key || ''));
+          } else {
+            // 用户在 VS Code 设置里粘贴了新 Key 或清空了字段 → 写入密钥库
+            context.secrets.store('chineseEyes.apiKey', cfgKey).then(() => {
+              if (cfgKey) {
+                c.update('apiKey', API_KEY_MASK, vscode.ConfigurationTarget.Global);
+              }
+              applyConfig(cfgKey);
+            });
+          }
         }
       })
     );

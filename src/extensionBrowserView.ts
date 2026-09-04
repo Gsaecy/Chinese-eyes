@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { Translator, TranslationConfig, listModels, checkModel } from './translator';
 import { queryExtensions, reorderByRelevance, sortItemsBy } from './marketplaceApi';
-import { ExtensionItem } from './types';
+import { ExtensionItem, API_KEY_MASK, isApiKeyMask } from './types';
 import { ExtensionDetailPanel } from './extensionDetailPanel';
 import { icon } from './icons';
 import { APPLE_CSS } from './theme';
@@ -56,10 +56,11 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
 
   private syncConfig(): TranslationConfig {
     const config = vscode.workspace.getConfiguration('chineseEyes');
-    const legacyKey = config.get('apiKey', '') as string;
+    const rawKey = config.get('apiKey', '') as string;
+    // 配置值可能是掩码占位，真值以密钥库注入的 translator 为准
+    const legacyKey = isApiKeyMask(rawKey) ? '' : rawKey;
     const cfg: TranslationConfig = {
       provider: config.get('translationProvider', 'local'),
-      // 密钥库的 Key 由 activate 时注入；这里保留当前 Key，不用空的配置值覆盖
       apiKey: legacyKey || this._translator.getApiKey(),
       targetLanguage: 'zh-CN',
       customEndpoint: config.get('apiEndpoint', ''),
@@ -323,12 +324,12 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
     await chConfig.update('translationProvider', provider, vscode.ConfigurationTarget.Global);
     await chConfig.update('apiEndpoint', endpoint, vscode.ConfigurationTarget.Global);
     await chConfig.update('apiModel', model, vscode.ConfigurationTarget.Global);
-    // API Key 存入系统密钥库（SecretStorage），不落 settings.json 明文
+    // API Key 存入系统密钥库（SecretStorage），settings.json 只留黑点掩码占位
     await this._context.secrets.store('chineseEyes.apiKey', apiKey);
     // 立即注入 translator，后续 syncConfig 与翻译请求直接用新 Key
     this._translator.setApiKey(apiKey);
-    // 清理旧版本写入 settings.json 的明文 Key
-    await chConfig.update('apiKey', undefined, vscode.ConfigurationTarget.Global);
+    // 设置 UI 显示黑点掩码（不清空配置项，习惯在 VS Code 设置里配置的用户可直接粘贴新 Key）
+    await chConfig.update('apiKey', apiKey ? API_KEY_MASK : '', vscode.ConfigurationTarget.Global);
   }
 
   /** 保存后后台校验模型名是否有效（LLM 供应商 + 已填 Key），结果通知前端显示状态 */
@@ -436,7 +437,7 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
 ${APPLE_CSS}
 /* ===== 侧边栏布局 ===== */
 body{padding:12px;font-size:13px}
-.header{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+.header{display:flex;flex-direction:column;gap:8px;margin-bottom:12px;position:sticky;top:0;z-index:10;background:var(--bg);padding-top:4px}
 .search-row{display:flex;gap:6px;align-items:center}
 .search-row .ap-input{flex:1;min-width:0}
 .toolbar{display:flex;gap:6px;align-items:center}
@@ -473,7 +474,7 @@ body{padding:12px;font-size:13px}
 .load-more{display:block;width:100%;margin:4px 0;padding:8px;text-align:center;background:transparent;color:var(--accent);border:none;border-radius:var(--radius-pill);cursor:pointer;font-size:12px;font-weight:600;font-family:inherit}
 .load-more:hover{background:var(--accent-soft)}
 .load-more:disabled{opacity:.5;cursor:not-allowed}
-.settings-area{margin-top:4px;padding:14px;display:none;position:sticky;top:0;z-index:10;max-height:calc(100vh - 100px);overflow-y:auto}
+.settings-area{margin-top:4px;padding:14px;display:none}
 .settings-area.show{display:block}
 .settings-area h3{font-size:13px;font-weight:700;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;color:var(--text)}
 .settings-area h3 .close{cursor:pointer;color:var(--accent);font-weight:500;font-size:11.5px}

@@ -58,6 +58,13 @@
           ],
           "order": 1
         },
+        "chineseEyes.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "翻译 API 密钥（以黑点掩码显示；直接粘贴新密钥即可更换）",
+          "markdownDescription": "翻译 API 密钥。值以 **黑点掩码** 显示（真实值保存在系统密钥库）。更换时直接粘贴新密钥即可；如需查看或复制真实密钥，请在扩展侧边栏的设置面板中操作。",
+          "order": 2
+        },
         "chineseEyes.apiEndpoint": {
           "type": "string",
           "default": "",
