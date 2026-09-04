@@ -102,11 +102,18 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
         case 'getSettings': {
           const config = vscode.workspace.getConfiguration('chineseEyes');
           // API Key 从系统密钥库读取；兼容旧版本 settings.json 明文
-          const storedKey = (await this._context.secrets.get('chineseEyes.apiKey')) || '';
+          let storedKey = (await this._context.secrets.get('chineseEyes.apiKey')) || '';
+          const legacyKey = config.get('apiKey', '') as string;
+          // 双保险：激活时迁移若未完成（如扩展加载顺序差异），打开面板时兜底迁移
+          if (!storedKey && legacyKey) {
+            await this._context.secrets.store('chineseEyes.apiKey', legacyKey);
+            await config.update('apiKey', undefined, vscode.ConfigurationTarget.Global);
+            storedKey = legacyKey;
+          }
           this.postMessage({
             type: 'settingsData',
             provider: config.get('translationProvider', 'local'),
-            apiKey: storedKey || config.get('apiKey', ''),
+            apiKey: storedKey,
             endpoint: config.get('apiEndpoint', ''),
             model: config.get('apiModel', ''),
           });
