@@ -455,7 +455,7 @@ body{padding:12px;font-size:13px}
 .load-more{display:block;width:100%;margin:4px 0;padding:8px;text-align:center;background:transparent;color:var(--accent);border:none;border-radius:var(--radius-pill);cursor:pointer;font-size:12px;font-weight:600;font-family:inherit}
 .load-more:hover{background:var(--accent-soft)}
 .load-more:disabled{opacity:.5;cursor:not-allowed}
-.settings-area{margin-top:4px;padding:14px;display:none;position:sticky;top:0;z-index:10}
+.settings-area{margin-top:4px;padding:14px;display:none;position:sticky;top:0;z-index:10;max-height:calc(100vh - 100px);overflow-y:auto}
 .settings-area.show{display:block}
 .settings-area h3{font-size:13px;font-weight:700;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;color:var(--text)}
 .settings-area h3 .close{cursor:pointer;color:var(--accent);font-weight:500;font-size:11.5px}
@@ -493,7 +493,9 @@ body{padding:12px;font-size:13px}
 .help-box strong{color:var(--accent);display:inline-flex;align-items:center;gap:5px;font-weight:700}
 .help-box .help-step{display:flex;gap:7px;margin-top:2px}
 .help-box .help-step .n{color:var(--accent);font-weight:700;flex-shrink:0}
-.ok-bar{margin-top:12px;padding:10px 14px;border:1px solid transparent;border-radius:var(--radius-m);font-size:12px;font-weight:600;display:none;align-items:center;gap:6px;line-height:1.6;text-align:left}
+.ok-bar{margin-top:12px;padding:12px 14px;border:1px solid transparent;border-radius:var(--radius-m);font-size:12px;font-weight:600;display:none;flex-direction:column;align-items:stretch;gap:6px;line-height:1.55;text-align:left;word-break:break-word}
+.ok-line{display:flex;align-items:flex-start;gap:6px}
+.ok-line svg{flex-shrink:0;margin-top:1.5px}
 .ok-bar.ok{background:rgba(52,199,89,.1);border-color:rgba(52,199,89,.35);color:#34c759}
 .ok-bar.warn{background:rgba(255,149,0,.1);border-color:rgba(255,149,0,.4);color:#ff9500}
 .ok-bar.err{background:rgba(255,59,48,.08);border-color:rgba(255,59,48,.4);color:#ff3b30}
@@ -1001,19 +1003,18 @@ function updateOkBar(){
     else orange.push(t); // API 正常但模型等次要内容错误 → 橘色
   }
   if (red.length > 0) {
-    const msgs = red.concat(orange).slice(0, 2);
-    okBar.innerHTML = ICON_WARN_TRI + '<span>' + msgs.join('；') + (red.length + orange.length > 2 ? ' 等' : '') + '</span>';
+    // 红/橘全部逐行显示，不截断；面板超高自动滚动
+    okBar.innerHTML = red.concat(orange).map((t) => '<div class="ok-line">' + ICON_WARN_TRI + '<span>' + t + '</span></div>').join('');
     okBar.className = 'ok-bar err';
     okBar.style.display = 'flex';
   } else if (orange.length > 0) {
-    const msgs = orange.slice(0, 2);
-    okBar.innerHTML = ICON_WARN_TRI + '<span>' + msgs.join('；') + (orange.length > 2 ? ' 等' : '') + '</span>';
+    okBar.innerHTML = orange.map((t) => '<div class="ok-line">' + ICON_WARN_TRI + '<span>' + t + '</span></div>').join('');
     okBar.className = 'ok-bar warn';
     okBar.style.display = 'flex';
   } else if (needModel && !modelCheckPassed) {
     okBar.style.display = 'none'; // 需模型但还没校验/校验中：不显示
   } else {
-    okBar.innerHTML = ICON_CHECK_GREEN + '<span>设置正常，请尽情使用</span>';
+    okBar.innerHTML = '<div class="ok-line">' + ICON_CHECK_GREEN + '<span>设置正常，请尽情使用</span></div>';
     okBar.className = 'ok-bar ok';
     okBar.style.display = 'flex';
   }
