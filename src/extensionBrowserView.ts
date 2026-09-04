@@ -609,7 +609,7 @@ body{padding:12px;font-size:13px}
     <strong>${icon('sparkle', 13)} 推荐配置</strong>
     <div class="help-step"><span class="n">1</span><span>在「Agent 供应商」选品牌（如 DeepSeek / 阿里云 / Kimi）→ 地址和模型自动填好</span></div>
     <div class="help-step"><span class="n">2</span><span>只填 API Key → 点「应用」或「保存」，即可翻译 + AI 总结</span></div>
-    <div class="help-step"><span class="n">3</span><span>不填 Key 也能用：免费在线翻译（有道/Google）自动生效；AI 总结需配置 Key</span></div>
+    <div class="help-step"><span class="n">3</span><span>不填 Key 也能用：翻译默认走免费在线翻译（有道/Google）；受次数/字数限制时自动改用 API。API Key 主要用于 AI 总结</span></div>
   </div>
   <div class="ok-bar" id="settingsOkBar" style="display:none">${icon('check', 13)} 设置正常，请尽情使用</div>
 </div>

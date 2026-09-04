@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { Translator } from './translator';
+import { Translator, chineseRatio } from './translator';
 import { ExtensionItem } from './types';
 import { getExtensionReadme } from './marketplaceApi';
 import { icon } from './icons';
@@ -206,6 +206,11 @@ export class ExtensionDetailPanel {
     try {
       const isHtml = /^\s*<(html|body|div|table|section|article|main|header|footer)\b/i.test(this._originalReadme);
       const text = isHtml ? stripHtml(this._originalReadme) : this._originalReadme;
+      // 原文已是中文：直接返回并提示，不再发起翻译请求
+      if (chineseRatio(text) > 0.3) {
+        this.post({ type: 'translateReadmeDone', translated: text, warning: '原文已是中文，无需翻译' });
+        return;
+      }
       const res = await this._translator.translateMarkdown(text, this.getProxyUrl());
       this._translatedReadme = res.text;
       this.post({ type: 'translateReadmeDone', translated: res.text, warning: res.warning });

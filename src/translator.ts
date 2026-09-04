@@ -125,27 +125,31 @@ export class Translator {
     const provider = this.config.provider;
     const apiProviders = ['deepl', 'google', 'libretranslate', 'deepseek', 'openai-compatible'];
 
-    // 1. 已配置 API Key 的提供商
-    if (apiProviders.includes(provider) && this.config.apiKey) {
-      try {
-        const translated = await this.translateViaProviderOne(text);
-        if (isRealTranslation(text, translated)) {
-          const r: TranslateResult = { text: translated, source: 'api' };
-          this.smartCache.set(text, r);
-          return r;
-        }
-        console.warn('[chineseEyes] API 返回内容仍是英文，尝试免费渠道');
-      } catch (err) {
-        console.warn('[chineseEyes] API 翻译失败，尝试免费渠道:', err);
-      }
-    }
-
-    // 2. 免费在线翻译（无需 Key，支持代理）
+    // 1. 免费在线翻译优先（有道/Google，不消耗 API 额度）
     const free = await this.tryFreeOnlineTranslate(text, proxyUrl);
     if (free) {
       const r: TranslateResult = { text: free, source: 'free-online' };
       this.smartCache.set(text, r);
       return r;
+    }
+
+    // 2. 免费服务受次数/字数限制或不可用 → 才调用已配置的 API 提供商
+    if (apiProviders.includes(provider) && this.config.apiKey) {
+      try {
+        const translated = await this.translateViaProviderOne(text);
+        if (isRealTranslation(text, translated)) {
+          const r: TranslateResult = {
+            text: translated,
+            source: 'api',
+            warning: '免费在线翻译受次数/字数限制，已自动改用 API 翻译',
+          };
+          this.smartCache.set(text, r);
+          return r;
+        }
+        console.warn('[chineseEyes] API 返回内容仍是英文，使用本地词典兜底');
+      } catch (err) {
+        console.warn('[chineseEyes] API 翻译失败，使用本地词典兜底:', err);
+      }
     }
 
     // 3. 本地词典兜底 + 明确提示
@@ -181,6 +185,11 @@ export class Translator {
     }
     try {
       const chunks = splitTextForTranslate(text, 900);
+      // 超过免费服务字数限制（约 5400 字符）→ 直接跳过免费通道，交给 API 翻译
+      if (chunks.length > 6) {
+        console.log('[chineseEyes] 文本 ' + text.length + ' 字符，超过免费翻译字数限制，跳过免费通道');
+        return null;
+      }
       // 依次尝试各免费通道；每个通道直连与代理并行，谁先成功用谁
       const providers: FreeProvider[] = ['google', 'youdao'];
       for (const provider of providers) {
@@ -251,22 +260,32 @@ export class Translator {
 
   /**
    * 翻译一段较长的 Markdown 文本（如 README）。
-   * LLM provider 时直接调用 LLM 输出中文 Markdown；否则走智能翻译（免费在线/本地词典）。
+   * 策略：免费在线翻译优先（有道/Google）→ 受次数/字数限制时才调用 LLM API → 智能翻译兑底。
+   * API 默认只用于 AI 总结。
    */
   async translateMarkdown(markdown: string, proxyUrl?: string): Promise<{ text: string; warning?: string }> {
     if (!markdown || !markdown.trim()) return { text: markdown };
 
+    // 1. 免费在线翻译优先（有道/Google，不消耗 API 额度）
+    const free = await this.tryFreeOnlineTranslate(markdown, proxyUrl);
+    if (free && free.trim() && isRealTranslation(markdown, free)) {
+      return { text: free };
+    }
+
+    // 2. 免费服务受次数/字数限制 → 才动用 LLM API（API 默认只用于 AI 总结）
     if (this.isLLMProvider() && this.config.apiKey) {
       const { endpoint, model } = this.resolveLLMConfig();
       try {
         const out = await this.translateMarkdownViaLLM(endpoint, model, markdown);
-        if (out) return { text: out };
+        if (out) {
+          return { text: out, warning: '免费在线翻译受次数/字数限制，已自动改用 API 翻译' };
+        }
       } catch (err) {
         console.warn('[chineseEyes] LLM Markdown 翻译失败，降级到智能翻译:', err);
       }
     }
 
-    // LLM 不可用/失败：智能翻译（免费在线 / 本地词典）
+    // 3. 智能翻译兑底（免费通道 60s 冷却已跳过；已配置非 LLM 翻译 API 时走 API；否则本地词典）
     const res = await this.translateSmart(markdown, proxyUrl);
     return { text: res.text, warning: res.warning };
   }
@@ -1256,7 +1275,7 @@ const PAID_KEYS = new Set([
 ]);
 
 /** 统计中文字符占比（0~1） */
-function chineseRatio(text: string): number {
+export function chineseRatio(text: string): number {
   let ch = 0;
   let total = 0;
   for (const c of text) {
