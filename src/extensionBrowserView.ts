@@ -493,12 +493,22 @@ body{padding:12px;font-size:13px}
 .help-box strong{color:var(--accent);display:inline-flex;align-items:center;gap:5px;font-weight:700}
 .help-box .help-step{display:flex;gap:7px;margin-top:2px}
 .help-box .help-step .n{color:var(--accent);font-weight:700;flex-shrink:0}
-.ok-bar{margin-top:12px;padding:12px 14px;border:1px solid transparent;border-radius:var(--radius-m);font-size:12px;font-weight:600;display:none;flex-direction:column;align-items:stretch;gap:6px;line-height:1.55;text-align:left;word-break:break-word}
+.ok-bar{margin-top:12px;padding:10px 12px;border:1px solid transparent;border-radius:var(--radius-m);font-size:12px;font-weight:600;display:none;flex-direction:column;align-items:stretch;gap:4px;line-height:1.55;text-align:left;word-break:break-word}
 .ok-line{display:flex;align-items:flex-start;gap:6px}
 .ok-line svg{flex-shrink:0;margin-top:1.5px}
 .ok-bar.ok{background:rgba(52,199,89,.1);border-color:rgba(52,199,89,.35);color:#34c759}
 .ok-bar.warn{background:rgba(255,149,0,.1);border-color:rgba(255,149,0,.4);color:#ff9500}
 .ok-bar.err{background:rgba(255,59,48,.08);border-color:rgba(255,59,48,.4);color:#ff3b30}
+.ok-group{border-radius:8px;overflow:hidden}
+.ok-toggle{display:flex;align-items:center;gap:6px;width:100%;padding:6px 8px;background:none;border:none;cursor:pointer;color:inherit;font:inherit;font-weight:600;font-size:12px;text-align:left}
+.ok-toggle:hover{background:rgba(127,127,127,.12)}
+.ok-toggle svg{flex-shrink:0}
+.ok-count{margin-left:auto;padding:0 7px;border-radius:9px;font-size:10.5px;line-height:16px;background:rgba(127,127,127,.18);font-weight:700}
+.ok-arrow{transition:transform .15s;font-size:10px;opacity:.7}
+.ok-group.open .ok-arrow{transform:rotate(90deg)}
+.ok-details{display:none;padding:2px 8px 8px 24px;font-weight:500}
+.ok-group.open .ok-details{display:block}
+.ok-details .ok-line{margin-top:5px}
 .home-pro{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--text-sub);flex-wrap:wrap;line-height:1.6}
 </style>
 </head>
@@ -988,29 +998,56 @@ function looksLikeApiError(text){
   return /401|402|403|429|insufficient|balance|credit|quota|billing|expired|unauthor|authentication|api.?key|apikey|余额|欠费|过期|取消|配额|认证|余额不足/i.test(String(text || ''));
 }
 
-/** 底部状态条三色分级：红=影响功能的 API/必填项问题；橘=API 正常但其他次要问题；绿=全部正常 */
+/** 错误类型归类（有限几类，点击类型展开具体错误） */
+const OK_CAT_ORDER = ['apikey', 'endpoint', 'api', 'model', 'vendor'];
+const OK_CAT_LABELS = {
+  apikey: 'API Key 配置',
+  endpoint: 'API 地址配置',
+  api: 'API 校验失败',
+  model: '模型问题',
+  vendor: '供应商设置',
+};
+
+/** 收集问题并按类型归类 */
+function buildOkGroups(){
+  const groups = {};
+  const push = (cat, text, severity) => {
+    if (!groups[cat]) groups[cat] = { cat, severity: 'warning', items: [] };
+    if (severity === 'error') groups[cat].severity = 'error';
+    groups[cat].items.push(text);
+  };
+  validateSettings().forEach((p) => push(p.category || 'vendor', p.text, p.severity));
+  if (modelCheckFailed) {
+    push(looksLikeApiError(modelCheckFailed) ? 'api' : 'model', modelCheckFailed, looksLikeApiError(modelCheckFailed) ? 'error' : 'warning');
+  }
+  return OK_CAT_ORDER.map((cat) => groups[cat]).filter(Boolean);
+}
+
+/** 底部状态条：错误按类型归类成可点击徽章，点击展开明细；全部正常时绿色单行 */
 function updateOkBar(){
   if (!okBar) return;
   const vendor = vendorSelect.value;
   const isLLM = !!PRESETS[vendor] || vendor === 'custom';
   const needModel = isLLM && !!modelInput.value.trim();
-  const ps = validateSettings();
-  const red = ps.filter((p) => p.severity === 'error').map((p) => p.text);
-  const orange = ps.filter((p) => p.severity === 'warning').map((p) => p.text);
-  if (modelCheckFailed) {
-    const t = '模型/API 校验失败：' + modelCheckFailed;
-    if (looksLikeApiError(modelCheckFailed)) red.push(t);
-    else orange.push(t); // API 正常但模型等次要内容错误 → 橘色
-  }
-  if (red.length > 0) {
-    // 红/橘全部逐行显示，不截断；面板超高自动滚动
-    okBar.innerHTML = red.concat(orange).map((t) => '<div class="ok-line">' + ICON_WARN_TRI + '<span>' + t + '</span></div>').join('');
-    okBar.className = 'ok-bar err';
+  const groups = buildOkGroups();
+  const hasErr = groups.some((g) => g.severity === 'error');
+  if (groups.length > 0) {
+    okBar.innerHTML = groups.map((g, i) =>
+      '<div class="ok-group' + (i === 0 ? ' open' : '') + '" data-cat="' + g.cat + '">'
+      + '<button class="ok-toggle" type="button">' + ICON_WARN_TRI
+      + '<span>' + OK_CAT_LABELS[g.cat] + '</span>'
+      + '<span class="ok-count">' + g.items.length + '</span>'
+      + '<span class="ok-arrow">▸</span></button>'
+      + '<div class="ok-details">' + g.items.map((t) => '<div class="ok-line">' + ICON_WARN_TRI + '<span>' + t + '</span></div>').join('') + '</div>'
+      + '</div>'
+    ).join('');
+    okBar.className = 'ok-bar ' + (hasErr ? 'err' : 'warn');
     okBar.style.display = 'flex';
-  } else if (orange.length > 0) {
-    okBar.innerHTML = orange.map((t) => '<div class="ok-line">' + ICON_WARN_TRI + '<span>' + t + '</span></div>').join('');
-    okBar.className = 'ok-bar warn';
-    okBar.style.display = 'flex';
+    okBar.querySelectorAll('.ok-toggle').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        btn.parentElement.classList.toggle('open');
+      });
+    });
   } else if (needModel && !modelCheckPassed) {
     okBar.style.display = 'none'; // 需模型但还没校验/校验中：不显示
   } else {
@@ -1078,13 +1115,13 @@ function validateSettings(){
   const isTranslateOnly = vendor === 'deepl' || vendor === 'google' || vendor === 'libretranslate';
 
   if (vendor === 'local') {
-    if (key) problems.push({ text: '当前供应商是「本地词典」，填了 API Key 也不会生效；如需用 Key 请先选择 LLM 品牌供应商', focus: vendorSelect, severity: 'warning' });
+    if (key) problems.push({ text: '当前供应商是「本地词典」，填了 API Key 也不会生效；如需用 Key 请先选择 LLM 品牌供应商', focus: vendorSelect, severity: 'warning', category: 'vendor' });
   } else if (isTranslateOnly) {
-    if (!key) problems.push({ text: '供应商「' + vendor + '」需要填写 API Key', focus: apiKeyInput, severity: 'error' });
+    if (!key) problems.push({ text: '供应商「' + vendor + '」需要填写 API Key', focus: apiKeyInput, severity: 'error', category: 'apikey' });
   } else if (isLLM) {
-    if (!key) problems.push({ text: '请填写 API Key', focus: apiKeyInput, severity: 'error' });
-    if (vendor === 'custom' && !endpoint) problems.push({ text: '「自定义」供应商请填写 API 地址', focus: endpointInput, severity: 'error' });
-    if (!model) problems.push({ text: '请选择或输入模型名称', focus: modelInput, severity: 'error' });
+    if (!key) problems.push({ text: '请填写 API Key', focus: apiKeyInput, severity: 'error', category: 'apikey' });
+    if (vendor === 'custom' && !endpoint) problems.push({ text: '「自定义」供应商请填写 API 地址', focus: endpointInput, severity: 'error', category: 'endpoint' });
+    if (!model) problems.push({ text: '请选择或输入模型名称', focus: modelInput, severity: 'error', category: 'model' });
   }
   return problems;
 }
