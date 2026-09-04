@@ -886,18 +886,19 @@ function vendorFromConfig(provider, endpoint, model){
   return 'custom';
 }
 
-/** 填充模型下拉框：候选模型 + 当前值（保持选中），不覆盖用户已填内容 */
+/** 填充模型下拉框：只显示官方/检测到的模型列表，当前值在列表内则选中 */
 function populateModelSelect(candidates){
   if (!modelSelect) return;
   const current = (modelInput.value || '').trim();
-  const list = Array.isArray(candidates) ? candidates.slice() : [];
-  if (current && !list.includes(current)) {
-    list.unshift(current);
-  }
+  const list = Array.isArray(candidates) ? candidates.slice().filter((m) => String(m).trim()) : [];
   modelSelect.innerHTML = list
     .map((m) => '<option value="' + String(m).replace(/"/g, '&quot;') + '">' + String(m).replace(/</g, '&lt;') + '</option>')
     .join('');
-  if (current) modelSelect.value = current;
+  if (current && list.includes(current)) {
+    modelSelect.value = current;
+  } else {
+    modelSelect.value = '';
+  }
   if (!list.length) {
     modelSelect.innerHTML = '<option value="">（填写地址后点「检测模型」）</option>';
   }
@@ -1271,8 +1272,19 @@ window.addEventListener('message', (event) => {
           });
         }
       }
-      // 模型校验状态只在保存/应用后显示；打开面板时清空指示图标
-      setModelStatus('none');
+      // 打开面板时自动校验当前模型，显示红字/绿勾标识（静默后台）
+      if (appliedKey && modelInput.value.trim() && PRESETS[vendor]) {
+        setModelStatus('checking');
+        vscode.postMessage({
+          type: 'verifyModel',
+          provider: vendorProvider(vendor),
+          endpoint: endpointInput.value.trim(),
+          model: modelInput.value.trim(),
+          apiKey: appliedKey,
+        });
+      } else {
+        setModelStatus('none');
+      }
       break;
     case 'applyApiKeyResult':
       setSettingsBusy(false);
