@@ -464,8 +464,7 @@ body{padding:12px;font-size:13px}
 .welcome-content p{font-size:12.5px;color:var(--text-sub);margin-bottom:18px;line-height:1.6}
 /* ===== 首页（欢迎页） ===== */
 .home-wrap{padding:2px}
-.home-hero{text-align:center;padding:20px 8px 14px}
-.home-hero .mark{width:60px;height:60px;border-radius:16px;background:linear-gradient(135deg,var(--accent),#5e5ce6);color:#fff;display:flex;align-items:center;justify-content:center;margin:0 auto 10px;box-shadow:0 8px 20px rgba(0,122,255,.28)}
+.home-hero{text-align:center;padding:14px 8px 12px}
 .home-hero h2{font-size:16px;font-weight:700;letter-spacing:-.01em;margin-bottom:5px}
 .home-hero p{font-size:11.5px;color:var(--text-sub);line-height:1.65}
 .home-features{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0}
@@ -612,7 +611,6 @@ const ICON_WARNING = '<svg class="ico" viewBox="0 0 16 16" width="12" height="12
 function welcomeHtml(){
   return '<div class="home-wrap">'
     + '<div class="home-hero">'
-    + '<div class="mark">' + ICON_GLOBE + '</div>'
     + '<h2>扩展选择助手</h2>'
     + '<p>看透外文扩展，选对每个插件</p>'
     + '<button id="loadExtensionsBtn" class="ap-btn ap-btn-primary">' + ICON_GRID + '<span class="lbl">浏览扩展</span></button>'
