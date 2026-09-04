@@ -994,6 +994,7 @@ if (translatorBtn) {
 const homeBtn = el('homeBtn');
 if (homeBtn) {
   homeBtn.addEventListener('click', () => {
+    settingsArea.classList.remove('show'); // 收起设置面板
     searchInput.value = '';
     state.query = '';
     clearSearchBtn.style.display = 'none';
