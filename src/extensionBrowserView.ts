@@ -481,7 +481,7 @@ body{padding:12px;font-size:13px}
   </div>
   <div class="ap-seg" id="sortSeg">
     <span class="sort-chip" data-sort="popular">热门</span>
-    <span class="sort-chip" data-sort="downloads">下载量</span>
+    <span class="sort-chip" data-sort="downloads">最多下载</span>
     <span class="sort-chip" data-sort="rating">评分</span>
     <span class="sort-chip" data-sort="publishedDate">最新</span>
     <span class="sort-chip" data-sort="relevance">相关</span>
@@ -1067,9 +1067,18 @@ if (applyKeyBtn) {
   });
 }
 
+/** 设置作为独立页面：展开时隐藏搜索/排序/列表，只显示设置内容 */
+function setSettingsPageVisible(show){
+  settingsArea.classList.toggle('show', show);
+  document.querySelectorAll('.search-row, .toolbar, #sortSeg, #capabilityBar, #listArea').forEach((n) => {
+    n.style.display = show ? 'none' : '';
+  });
+}
+
 settingsBtn.addEventListener('click', () => {
-  settingsArea.classList.toggle('show');
-  if (settingsArea.classList.contains('show')){
+  const show = !settingsArea.classList.contains('show');
+  setSettingsPageVisible(show);
+  if (show){
     // 从后端获取真实配置值
     vscode.postMessage({type:'getSettings'});
   }
@@ -1084,7 +1093,7 @@ if (loadExtensionsBtn) {
     vscode.postMessage({type:'search', query: ''});
   });
 }
-closeSettings.addEventListener('click', () => settingsArea.classList.remove('show'));
+closeSettings.addEventListener('click', () => setSettingsPageVisible(false));
 
 const closePanelBtn = el('closePanelBtn');
 if (closePanelBtn) {
@@ -1101,7 +1110,7 @@ if (translatorBtn) {
 const homeBtn = el('homeBtn');
 if (homeBtn) {
   homeBtn.addEventListener('click', () => {
-    settingsArea.classList.remove('show'); // 收起设置面板
+    setSettingsPageVisible(false); // 收起设置页面
     searchInput.value = '';
     state.query = '';
     clearSearchBtn.style.display = 'none';
@@ -1284,7 +1293,7 @@ window.addEventListener('message', (event) => {
       state.hasApiKey = !!msg.hasApiKey;
       state.canSummarize = !!msg.canSummarize;
       renderCapability();
-      settingsArea.classList.remove('show');
+      setSettingsPageVisible(false);
       showToast('设置已保存', 'success');
       // 不自动重新搜索，避免保存后跳转到热门列表页
       break;
