@@ -491,7 +491,7 @@ body{padding:12px;font-size:13px}
     <input type="text" id="modelInput" class="ap-input" placeholder="如 deepseek-chat、gpt-4o-mini、qwen-plus">
   </div>
   <div class="settings-actions">
-    <button class="ap-btn ap-btn-primary" id="saveSettingsBtn">保存</button>
+    <button class="ap-btn" id="saveSettingsBtn" disabled title="修改设置后可保存">保存</button>
     <button class="ap-btn ap-btn-ghost" id="openSettingsBtn">在 VS Code 设置中打开</button>
   </div>
   <div class="help-box">
@@ -815,6 +815,7 @@ if (vendorSelect) {
       if (!modelInput.value.trim()) modelInput.value = p.model;
       populateModelSelect(p.models);
     }
+    markSettingsDirty();
   });
 }
 
@@ -828,6 +829,7 @@ if (endpointInput) {
     } else if (endpointInput.value.trim()) {
       vendorSelect.value = 'custom';
     }
+    markSettingsDirty();
   });
 }
 
@@ -837,6 +839,7 @@ if (modelSelect) {
     if (modelSelect.value) {
       modelInput.value = modelSelect.value;
     }
+    markSettingsDirty();
   });
 }
 
@@ -856,6 +859,7 @@ if (detectModelsBtn) {
 /* ---- 应用/保存状态机与防误触 ---- */
 let appliedKey = '';   // 已成功应用/保存的 API Key（trim 后）
 let busyTimer = null;
+let settingsDirty = false; // 设置面板是否有未保存的修改
 
 function updateApplyBtnState(){
   const key = apiKeyInput.value.trim();
@@ -863,6 +867,22 @@ function updateApplyBtnState(){
   applyKeyBtn.textContent = isApplied ? '已应用' : '应用';
   applyKeyBtn.classList.toggle('ap-btn-success', isApplied);
   applyKeyBtn.classList.toggle('ap-btn-primary', !isApplied);
+}
+
+/** 保存按钮：有未保存修改 → 蓝色可点；无修改 → 灰色不可点 */
+function updateSaveBtnState(){
+  saveSettingsBtn.disabled = !settingsDirty;
+  saveSettingsBtn.classList.toggle('ap-btn-primary', settingsDirty);
+}
+
+function markSettingsDirty(){
+  settingsDirty = true;
+  updateSaveBtnState();
+}
+
+function markSettingsClean(){
+  settingsDirty = false;
+  updateSaveBtnState();
 }
 
 function setSettingsBusy(busy){
@@ -880,17 +900,22 @@ function setSettingsBusy(busy){
   } else {
     saveSettingsBtn.textContent = '保存';
     updateApplyBtnState();
+    updateSaveBtnState();
   }
 }
 
-// API 输入框被编辑（换了新 Key）→ 应用按钮恢复蓝色「应用」
+// API 输入框被编辑（换了新 Key）→ 应用按钮恢复蓝色「应用」，保存按钮变蓝可点
 apiKeyInput.addEventListener('input', () => {
   const key = apiKeyInput.value.trim();
   if (appliedKey && key !== appliedKey) {
     appliedKey = '';
   }
   updateApplyBtnState();
+  markSettingsDirty();
 });
+
+// 模型手动输入也算修改
+modelInput.addEventListener('input', markSettingsDirty);
 
 // 应用按钮：单独保存 API Key 并自动检测模型（防止未点底部保存导致 Key 丢失）
 if (applyKeyBtn) {
@@ -1043,6 +1068,8 @@ window.addEventListener('message', (event) => {
       // 已保存过 Key 的显示「已应用」绿色状态
       appliedKey = msg.apiKey || '';
       updateApplyBtnState();
+      // 加载完成后视为干净状态：保存按钮灰色
+      markSettingsClean();
       // 按地址匹配预设列出候选模型，当前已填模型保持选中且不被覆盖
       const matched = presetByEndpoint(msg.endpoint);
       populateModelSelect(matched ? matched.preset.models : (msg.model ? [msg.model] : []));
@@ -1052,6 +1079,8 @@ window.addEventListener('message', (event) => {
       // 应用成功：记录已应用的 Key，按钮变绿色「已应用」
       appliedKey = apiKeyInput.value.trim();
       updateApplyBtnState();
+      // 应用已保存全部设置 → 保存按钮回灰色
+      markSettingsClean();
       state.provider = msg.provider || 'local';
       state.hasApiKey = !!msg.hasApiKey;
       state.canSummarize = !!msg.canSummarize;
@@ -1084,6 +1113,7 @@ window.addEventListener('message', (event) => {
       // 保存成功也视为已应用（Key 已持久化）
       appliedKey = apiKeyInput.value.trim();
       updateApplyBtnState();
+      markSettingsClean();
       state.provider = msg.provider;
       state.hasApiKey = !!msg.hasApiKey;
       state.canSummarize = !!msg.canSummarize;
