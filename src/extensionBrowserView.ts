@@ -454,27 +454,21 @@ body{padding:12px;font-size:13px}
 <div class="settings-area ap-pop" id="settingsArea">
   <h3>设置 <span class="close" id="closeSettings">收起</span></h3>
   <div class="ap-field">
-    <label>Agent 预设（选一个，自动填好地址和模型，你只需填 API Key）</label>
-    <select id="presetSelect" class="ap-select">
-      <option value="custom">自定义（手动填下方地址和模型）</option>
-      <option value="deepseek">DeepSeek 官方</option>
-      <option value="openai">OpenAI 官方</option>
-      <option value="dashscope">阿里云百炼 DashScope（qwen）</option>
-      <option value="moonshot">月之暗面 Kimi</option>
-      <option value="glm">智谱 GLM</option>
-      <option value="siliconflow">硅基流动 SiliconFlow</option>
-    </select>
-  </div>
-  <div class="ap-field">
-    <label>翻译 / 总结 提供商</label>
-    <select id="providerSelect" class="ap-select">
-      <option value="local">本地词典（离线，无 AI 总结）</option>
-      <option value="deepseek">DeepSeek（推荐，翻译 + AI 总结）</option>
-      <option value="openai-compatible">OpenAI 兼容（翻译 + AI 总结）</option>
+    <label>Agent 供应商</label>
+    <select id="vendorSelect" class="ap-select">
+      <option value="local">本地词典（离线，无 AI 总结，免 Key）</option>
+      <option value="deepseek">DeepSeek 官方（翻译 + AI 总结）</option>
+      <option value="openai">OpenAI 官方（翻译 + AI 总结）</option>
+      <option value="dashscope">阿里云百炼 DashScope（翻译 + AI 总结）</option>
+      <option value="moonshot">月之暗面 Kimi（翻译 + AI 总结）</option>
+      <option value="glm">智谱 GLM（翻译 + AI 总结）</option>
+      <option value="siliconflow">硅基流动 SiliconFlow（翻译 + AI 总结）</option>
       <option value="deepl">DeepL（仅翻译）</option>
       <option value="google">Google（仅翻译）</option>
       <option value="libretranslate">LibreTranslate（仅翻译）</option>
+      <option value="custom">自定义（手动填下方地址和模型）</option>
     </select>
+    <div class="hint">选品牌自动填好地址和模型，你只需填 API Key</div>
   </div>
   <div class="ap-field">
     <label>API Key</label>
@@ -534,8 +528,7 @@ const searchBtn = el('searchBtn');
 const settingsBtn = el('settingsBtn');
 const settingsArea = el('settingsArea');
 const closeSettings = el('closeSettings');
-const providerSelect = el('providerSelect');
-const presetSelect = el('presetSelect');
+const vendorSelect = el('vendorSelect');
 const apiKeyInput = el('apiKeyInput');
 const modelSelect = el('modelSelect');
 const detectModelsBtn = el('detectModelsBtn');
@@ -813,45 +806,27 @@ function populateModelSelect(candidates){
   }
 }
 
-if (presetSelect) {
-  presetSelect.addEventListener('change', () => {
-    const p = PRESETS[presetSelect.value];
+// 供应商选择：品牌自动填地址/模型；本地与仅翻译选项不改动地址模型
+if (vendorSelect) {
+  vendorSelect.addEventListener('change', () => {
+    const p = PRESETS[vendorSelect.value];
     if (p) {
-      providerSelect.value = p.provider;
       endpointInput.value = p.endpoint;
-      modelInput.value = p.model;
+      if (!modelInput.value.trim()) modelInput.value = p.model;
       populateModelSelect(p.models);
     }
   });
 }
 
-// 输入地址时自动匹配预设并列出候选模型（不覆盖用户已填的模型）
+// 手动输入地址时：匹配品牌则同步供应商选择并列出模型，否则切到自定义
 if (endpointInput) {
   endpointInput.addEventListener('input', () => {
     const m = presetByEndpoint(endpointInput.value);
-    if (m && presetSelect.value === 'custom') {
+    if (m) {
+      vendorSelect.value = m.key;
       populateModelSelect(m.preset.models);
-    }
-  });
-}
-
-// 提供商选择联动：任选「Agent 预设」或「提供商」都能识别地址与模型
-if (providerSelect) {
-  providerSelect.addEventListener('change', () => {
-    const provider = providerSelect.value;
-    const matched = presetByEndpoint(endpointInput.value);
-    if ((provider === 'deepseek' || provider === 'openai-compatible') && matched) {
-      // 地址匹配预设 → 同步预设选中并列出候选模型
-      presetSelect.value = matched.key;
-      populateModelSelect(matched.preset.models);
-    } else if (provider === 'deepseek' && !endpointInput.value.trim()) {
-      // 直接选 DeepSeek → 应用官方预设
-      presetSelect.value = 'deepseek';
-      endpointInput.value = PRESETS.deepseek.endpoint;
-      if (!modelInput.value.trim()) modelInput.value = PRESETS.deepseek.model;
-      populateModelSelect(PRESETS.deepseek.models);
-    } else if (provider === 'openai-compatible' && !endpointInput.value.trim()) {
-      showToast('OpenAI 兼容模式需要 API 地址：建议在上方「Agent 预设」选择服务商', 'info');
+    } else if (endpointInput.value.trim()) {
+      vendorSelect.value = 'custom';
     }
   });
 }
@@ -883,16 +858,17 @@ if (applyKeyBtn) {
   applyKeyBtn.addEventListener('click', () => {
     const apiKey = apiKeyInput.value.trim();
     if (!apiKey) { showToast('请先粘贴 API Key', 'error'); return; }
-    if (presetSelect.value === 'custom' && !endpointInput.value.trim() && providerSelect.value === 'local') {
-      showToast('请选择 Agent：在上方「Agent 预设」中选择（如 DeepSeek / 阿里云 / Kimi），API Key 才能生效', 'error');
-      presetSelect.focus();
+    const vendor = vendorSelect.value;
+    if (vendor === 'local' || (vendor === 'custom' && !endpointInput.value.trim())) {
+      showToast('请选择 Agent 供应商：在上方下拉框选择品牌（如 DeepSeek / 阿里云 / Kimi），API Key 才能生效', 'error');
+      vendorSelect.focus();
       return;
     }
     applyKeyBtn.disabled = true;
     applyKeyBtn.textContent = '应用中…';
     vscode.postMessage({
       type: 'applyApiKey',
-      provider: providerSelect.value,
+      provider: vendorProvider(vendor),
       apiKey,
       endpoint: endpointInput.value.trim(),
       model: modelInput.value.trim(),
@@ -954,18 +930,19 @@ if (clearSearchBtn) {
 /**********************/
 
 saveSettingsBtn.addEventListener('click', () => {
-  // 校验：填了 API Key 但没选 Agent 预设、没填地址、提供商还是本地时，提醒用户先选 Agent
+  // 校验：填了 API Key 但供应商还是本地/自定义且无地址时，提醒用户先选 Agent 供应商
   const hasKey = !!apiKeyInput.value.trim();
-  if (hasKey && presetSelect.value === 'custom' && !endpointInput.value.trim() && providerSelect.value === 'local') {
-    showToast('请选择 Agent：在上方「Agent 预设」中选择（如 DeepSeek / 阿里云 / Kimi），保存后翻译才能生效', 'error');
-    presetSelect.focus();
+  const vendor = vendorSelect.value;
+  if (hasKey && (vendor === 'local' || (vendor === 'custom' && !endpointInput.value.trim()))) {
+    showToast('请选择 Agent 供应商：在上方下拉框选择品牌（如 DeepSeek / 阿里云 / Kimi），保存后翻译才能生效', 'error');
+    vendorSelect.focus();
     return;
   }
   saveSettingsBtn.disabled = true;
   saveSettingsBtn.textContent = '保存中…';
   vscode.postMessage({
     type: 'saveSettings',
-    provider: providerSelect.value,
+    provider: vendorProvider(vendor),
     apiKey: apiKeyInput.value.trim(),
     endpoint: endpointInput.value.trim(),
     model: modelInput.value.trim(),
@@ -1019,11 +996,10 @@ window.addEventListener('message', (event) => {
       break;
     case 'settingsData':
       // 从后端获取到真实配置值，填充设置面板（老用户已保存的配置原样展示）
-      providerSelect.value = msg.provider || 'local';
       apiKeyInput.value = msg.apiKey || '';
       endpointInput.value = msg.endpoint || '';
       modelInput.value = msg.model || '';
-      presetSelect.value = detectPreset(msg.provider, msg.endpoint, msg.model);
+      vendorSelect.value = vendorFromConfig(msg.provider, msg.endpoint, msg.model);
       // 按地址匹配预设列出候选模型，当前已填模型保持选中且不被覆盖
       const matched = presetByEndpoint(msg.endpoint);
       populateModelSelect(matched ? matched.preset.models : (msg.model ? [msg.model] : []));
