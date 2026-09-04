@@ -167,9 +167,9 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
               String(msg.endpoint || '').trim(),
               String(msg.apiKey || '').trim()
             );
-            this.postMessage({ type: 'detectModelsResult', models });
+            this.postMessage({ type: 'detectModelsResult', models, silent: msg.silent });
           } catch (err: any) {
-            this.postMessage({ type: 'detectModelsResult', error: err.message || String(err) });
+            this.postMessage({ type: 'detectModelsResult', error: err.message || String(err), silent: msg.silent });
           }
           break;
         }
@@ -193,14 +193,14 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
               detectError: '',
             });
 
-            // 后台检测模型列表，完成后单独推送结果
+            // 后台检测模型列表，完成后单独推送结果（静默）
             if (endpoint && apiKey && (provider === 'deepseek' || provider === 'openai-compatible')) {
               listModels(endpoint, apiKey)
                 .then((models) => {
-                  this.postMessage({ type: 'detectModelsResult', models });
+                  this.postMessage({ type: 'detectModelsResult', models, silent: true });
                 })
                 .catch((e: any) => {
-                  this.postMessage({ type: 'detectModelsResult', error: e.message || String(e) });
+                  this.postMessage({ type: 'detectModelsResult', error: e.message || String(e), silent: true });
                 });
             }
           } catch (err: any) {
@@ -732,8 +732,8 @@ const PRESETS = {
   deepseek: {
     provider: 'deepseek',
     endpoint: 'https://api.deepseek.com',
-    model: 'deepseek-chat',
-    models: ['deepseek-chat', 'deepseek-reasoner'],
+    model: 'deepseek-v4-flash',
+    models: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v4-flash-vision-exp'],
   },
   openai: {
     provider: 'openai-compatible',
@@ -882,6 +882,7 @@ if (detectModelsBtn) {
 let appliedKey = '';   // 已成功应用/保存的 API Key（trim 后）
 let busyTimer = null;
 let settingsDirty = false; // 设置面板是否有未保存的修改
+let modelsDetectedFor = ''; // 已自动检测过模型的 供应商|地址|Key，避免重复请求
 
 function updateApplyBtnState(){
   const key = apiKeyInput.value.trim();
@@ -1119,6 +1120,19 @@ window.addEventListener('message', (event) => {
             ? [msg.model]
             : [];
       populateModelSelect(candidates);
+      // 已配置 Key + 品牌供应商 → 自动后台检测真实模型列表（静默填充，有缓存防频繁请求）
+      if (appliedKey && PRESETS[vendor] && endpointInput.value.trim()) {
+        const detKey = vendor + '|' + endpointInput.value.trim() + '|' + appliedKey;
+        if (modelsDetectedFor !== detKey) {
+          modelsDetectedFor = detKey;
+          vscode.postMessage({
+            type: 'detectModels',
+            endpoint: endpointInput.value.trim(),
+            apiKey: appliedKey,
+            silent: true,
+          });
+        }
+      }
       break;
     case 'applyApiKeyResult':
       setSettingsBusy(false);
@@ -1140,13 +1154,18 @@ window.addEventListener('message', (event) => {
       detectModelsBtn.disabled = false;
       detectModelsBtn.textContent = '检测模型';
       if (msg.error) {
-        showToast(msg.error, 'error');
+        // 静默检测（打开面板自动触发）失败不打扰用户；手动点击才提示
+        if (!msg.silent) showToast(msg.error, 'error');
         break;
       }
       if (Array.isArray(msg.models) && msg.models.length > 0) {
         populateModelSelect(msg.models);
-        showToast('检测到 ' + msg.models.length + ' 个模型，可在下拉框切换', 'success');
-      } else {
+        // 记录已检测组合，避免重复自动检测
+        modelsDetectedFor = vendorSelect.value + '|' + endpointInput.value.trim() + '|' + apiKeyInput.value.trim();
+        if (!msg.silent) {
+          showToast('检测到 ' + msg.models.length + ' 个模型，可在下拉框切换', 'success');
+        }
+      } else if (!msg.silent) {
         showToast('未检测到模型列表，请手动输入模型名', 'error');
       }
       break;
