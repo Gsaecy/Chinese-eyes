@@ -493,7 +493,10 @@ body{padding:12px;font-size:13px}
 .help-box strong{color:var(--accent);display:inline-flex;align-items:center;gap:5px;font-weight:700}
 .help-box .help-step{display:flex;gap:7px;margin-top:2px}
 .help-box .help-step .n{color:var(--accent);font-weight:700;flex-shrink:0}
-.ok-bar{margin-top:12px;padding:10px 14px;background:rgba(52,199,89,.1);border:1px solid rgba(52,199,89,.35);border-radius:var(--radius-m);color:#34c759;font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px}
+.ok-bar{margin-top:12px;padding:10px 14px;border:1px solid transparent;border-radius:var(--radius-m);font-size:12px;font-weight:600;display:none;align-items:center;gap:6px;line-height:1.6;text-align:left}
+.ok-bar.ok{background:rgba(52,199,89,.1);border-color:rgba(52,199,89,.35);color:#34c759}
+.ok-bar.warn{background:rgba(255,149,0,.1);border-color:rgba(255,149,0,.4);color:#ff9500}
+.ok-bar.err{background:rgba(255,59,48,.08);border-color:rgba(255,59,48,.4);color:#ff3b30}
 .home-pro{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--text-sub);flex-wrap:wrap;line-height:1.6}
 </style>
 </head>
@@ -976,15 +979,44 @@ let busyTimer = null;
 let settingsDirty = false; // 设置面板是否有未保存的修改
 let modelsDetectedFor = ''; // 已自动检测过模型的 供应商|地址|Key，避免重复请求
 let modelCheckPassed = false; // 当前模型是否已校验通过（无模型需求时视同通过）
+let modelCheckFailed = ''; // 最近一次模型/API 校验失败的错误文案
 
-/** 底部「设置正常，请尽情使用」状态条：无配置问题且模型校验通过才显示 */
+/** API 类错误关键词：Key 被取消/过期/无余额等失败通常不是扩展的问题 */
+function looksLikeApiError(text){
+  return /401|402|403|429|insufficient|balance|credit|quota|billing|expired|unauthor|authentication|api.?key|apikey|余额|欠费|过期|取消|配额|认证|余额不足/i.test(String(text || ''));
+}
+
+/** 底部状态条三色分级：红=影响功能的 API/必填项问题；橘=API 正常但其他次要问题；绿=全部正常 */
 function updateOkBar(){
   if (!okBar) return;
   const vendor = vendorSelect.value;
   const isLLM = !!PRESETS[vendor] || vendor === 'custom';
   const needModel = isLLM && !!modelInput.value.trim();
-  const ok = validateSettings().length === 0 && (!needModel || modelCheckPassed);
-  okBar.style.display = ok ? 'flex' : 'none';
+  const ps = validateSettings();
+  const red = ps.filter((p) => p.severity === 'error').map((p) => p.text);
+  const orange = ps.filter((p) => p.severity === 'warning').map((p) => p.text);
+  if (modelCheckFailed) {
+    const t = '模型/API 校验失败：' + modelCheckFailed;
+    if (looksLikeApiError(modelCheckFailed)) red.push(t);
+    else orange.push(t); // API 正常但模型等次要内容错误 → 橘色
+  }
+  if (red.length > 0) {
+    const msgs = red.concat(orange).slice(0, 2);
+    okBar.innerHTML = ICON_WARN_TRI + '<span>' + msgs.join('；') + (red.length + orange.length > 2 ? ' 等' : '') + '</span>';
+    okBar.className = 'ok-bar err';
+    okBar.style.display = 'flex';
+  } else if (orange.length > 0) {
+    const msgs = orange.slice(0, 2);
+    okBar.innerHTML = ICON_WARN_TRI + '<span>' + msgs.join('；') + (orange.length > 2 ? ' 等' : '') + '</span>';
+    okBar.className = 'ok-bar warn';
+    okBar.style.display = 'flex';
+  } else if (needModel && !modelCheckPassed) {
+    okBar.style.display = 'none'; // 需模型但还没校验/校验中：不显示
+  } else {
+    okBar.innerHTML = ICON_CHECK_GREEN + '<span>设置正常，请尽情使用</span>';
+    okBar.className = 'ok-bar ok';
+    okBar.style.display = 'flex';
+  }
 }
 
 // 模型校验状态图标
@@ -992,19 +1024,22 @@ const ICON_WARN_TRI = '<svg class="ico" viewBox="0 0 16 16" width="14" height="1
 const ICON_CHECK_GREEN = '<svg class="ico" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="#34c759" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.25"/><path d="M5.25 8.25l2 2 3.5-4"/></svg>';
 
 /** 模型校验状态：bad=黄色感叹+红字，good=绿圈对勾，checking=校验中，none=隐藏 */
-function setModelStatus(kind, text){
+function setModelStatus(kind, text, errText){
   if (!modelStatus) return;
   if (kind === 'bad') {
     modelCheckPassed = false;
+    modelCheckFailed = errText || modelCheckFailed || '模型不可用';
     modelStatus.innerHTML = ICON_WARN_TRI + '<span>无法识别该模型</span>';
     modelStatus.className = 'model-status bad';
     modelStatus.style.display = 'inline-flex';
   } else if (kind === 'good') {
     modelCheckPassed = true;
+    modelCheckFailed = '';
     modelStatus.innerHTML = ICON_CHECK_GREEN;
     modelStatus.className = 'model-status good';
     modelStatus.style.display = 'inline-flex';
   } else if (kind === 'checking') {
+    modelCheckFailed = '';
     modelStatus.innerHTML = '<span style="color:var(--text-weak)">校验中…</span>';
     modelStatus.className = 'model-status';
     modelStatus.style.display = 'inline-flex';
@@ -1031,7 +1066,7 @@ function updateSaveBtnState(){
   saveSettingsBtn.classList.toggle('ap-btn-primary', active);
 }
 
-/** 校验当前设置，返回问题列表（含聚焦目标） */
+/** 校验当前设置，返回问题列表（含聚焦目标与严重度：error=影响功能红，warning=次要橘） */
 function validateSettings(){
   const problems = [];
   const vendor = vendorSelect.value;
@@ -1042,13 +1077,13 @@ function validateSettings(){
   const isTranslateOnly = vendor === 'deepl' || vendor === 'google' || vendor === 'libretranslate';
 
   if (vendor === 'local') {
-    if (key) problems.push({ text: '当前供应商是「本地词典」，填了 API Key 也不会生效；如需用 Key 请先选择 LLM 品牌供应商', focus: vendorSelect });
+    if (key) problems.push({ text: '当前供应商是「本地词典」，填了 API Key 也不会生效；如需用 Key 请先选择 LLM 品牌供应商', focus: vendorSelect, severity: 'warning' });
   } else if (isTranslateOnly) {
-    if (!key) problems.push({ text: '供应商「' + vendor + '」需要填写 API Key', focus: apiKeyInput });
+    if (!key) problems.push({ text: '供应商「' + vendor + '」需要填写 API Key', focus: apiKeyInput, severity: 'error' });
   } else if (isLLM) {
-    if (!key) problems.push({ text: '请填写 API Key', focus: apiKeyInput });
-    if (vendor === 'custom' && !endpoint) problems.push({ text: '「自定义」供应商请填写 API 地址', focus: endpointInput });
-    if (!model) problems.push({ text: '请选择或输入模型名称', focus: modelInput });
+    if (!key) problems.push({ text: '请填写 API Key', focus: apiKeyInput, severity: 'error' });
+    if (vendor === 'custom' && !endpoint) problems.push({ text: '「自定义」供应商请填写 API 地址', focus: endpointInput, severity: 'error' });
+    if (!model) problems.push({ text: '请选择或输入模型名称', focus: modelInput, severity: 'error' });
   }
   return problems;
 }
@@ -1065,6 +1100,7 @@ function updateEndpointInputState(){
 function markSettingsDirty(){
   settingsDirty = true;
   modelCheckPassed = false; // 配置可能已变，旧的模型校验结果作废
+  modelCheckFailed = '';
   updateSaveBtnState();
   setModelStatus('none'); // 修改设置后清空旧校验状态
   updateOkBar();
@@ -1335,8 +1371,14 @@ window.addEventListener('message', (event) => {
       if (msg.ok) {
         setModelStatus('good');
       } else {
-        setModelStatus('bad');
-        showToast('模型「' + (msg.model || '') + '」校验失败：' + (msg.error || '未知错误') + '。请检查模型名或点「检测模型」选择正确模型。', 'error');
+        const errText = msg.error || '未知错误';
+        setModelStatus('bad', undefined, errText);
+        if (looksLikeApiError(errText)) {
+          // API 被取消/过期/无余额等：通常不是扩展的问题，3 秒弹窗提示
+          showToast('API 请求失败（' + errText + '）。这通常不是扩展的问题：请检查 API Key 是否已取消、过期或余额不足', 'error');
+        } else {
+          showToast('模型「' + (msg.model || '') + '」校验失败：' + errText + '。请检查模型名或点「检测模型」选择正确模型。', 'error');
+        }
       }
       break;
     case 'detectModelsResult':
@@ -1370,8 +1412,13 @@ window.addEventListener('message', (event) => {
       renderCapability();
       if (msg.modelOk === false) {
         // 模型无效：留在设置页，显示红字标识，方便用户继续修改
-        setModelStatus('bad');
-        showToast('设置已保存，但模型「' + modelInput.value.trim() + '」无效：' + (msg.modelError || '未知错误') + '。请修改模型后重新保存。', 'error');
+        const errText = msg.modelError || '未知错误';
+        setModelStatus('bad', undefined, errText);
+        if (looksLikeApiError(errText)) {
+          showToast('设置已保存，但 API 请求失败（' + errText + '）。这通常不是扩展的问题：请检查 API Key 是否已取消、过期或余额不足', 'error');
+        } else {
+          showToast('设置已保存，但模型「' + modelInput.value.trim() + '」无效：' + errText + '。请修改模型后重新保存。', 'error');
+        }
       } else if (msg.modelOk === true) {
         // 模型有效：显示绿勾，设置面板保持展开
         setModelStatus('good');
