@@ -378,6 +378,11 @@ export class Translator {
     const chunks = splitMarkdownForLLM(markdown, 6000);
     const parts: string[] = [];
     for (const chunk of chunks) {
+      // 混排文档按块分流：中文为主的块原样保留，英文块才翻译
+      if (chineseRatio(chunk) > 0.3) {
+        parts.push(chunk);
+        continue;
+      }
       const out = await this.chatCompletion(endpoint, model, systemPrompt, chunk, 0.1, 4096, 60000);
       if (!out) throw new Error('模型返回空内容');
       parts.push(out);

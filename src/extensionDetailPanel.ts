@@ -206,8 +206,8 @@ export class ExtensionDetailPanel {
     try {
       const isHtml = /^\s*<(html|body|div|table|section|article|main|header|footer)\b/i.test(this._originalReadme);
       const text = this._originalReadme;
-      // 原文已是中文：直接返回并提示，不再发起翻译请求
-      if (chineseRatio(isHtml ? stripHtml(text) : text) > 0.3) {
+      // 原文几乎全中文：直接返回并提示，不再发起翻译请求（混排文档仍走翻译）
+      if (chineseRatio(isHtml ? stripHtml(text) : text) > 0.9) {
         this.post({ type: 'translateReadmeDone', translated: text, warning: '原文已是中文，无需翻译' });
         return;
       }
