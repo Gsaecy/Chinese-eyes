@@ -49,6 +49,12 @@ export class Translator {
     return this.config.apiKey || '';
   }
 
+  /** 仅更新 API Key（密钥库保存后立即注入，避免读配置竞态） */
+  setApiKey(apiKey: string): void {
+    this.config = { ...this.config, apiKey };
+    this.smartCache.clear();
+  }
+
   /** 批量翻译文本 */
   async translateBatch(texts: string[]): Promise<Record<string, string>> {
     const result: Record<string, string> = {};

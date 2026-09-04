@@ -73,6 +73,9 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
     try {
       switch (msg.type) {
         case 'ready': {
+          // 先等密钥库 Key 就绪，再同步配置（避免激活迁移完成前的窗口期读到空 Key）
+          const key = await this._context.secrets.get('chineseEyes.apiKey');
+          if (key) this._translator.setApiKey(key);
           const cfg = this.syncConfig();
           this.postMessage({
             type: 'init',
@@ -315,6 +318,8 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
     await chConfig.update('apiModel', model, vscode.ConfigurationTarget.Global);
     // API Key 存入系统密钥库（SecretStorage），不落 settings.json 明文
     await this._context.secrets.store('chineseEyes.apiKey', apiKey);
+    // 立即注入 translator，后续 syncConfig 与翻译请求直接用新 Key
+    this._translator.setApiKey(apiKey);
     // 清理旧版本写入 settings.json 的明文 Key
     await chConfig.update('apiKey', undefined, vscode.ConfigurationTarget.Global);
   }
