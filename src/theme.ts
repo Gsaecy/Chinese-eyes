@@ -159,6 +159,7 @@ body{
 .ap-field{display:flex;flex-direction:column;gap:5px;margin-bottom:12px}
 .ap-field label{font-size:11.5px;font-weight:600;color:var(--text-sub)}
 .ap-field .hint{font-size:10.5px;color:var(--text-weak);line-height:1.5}
+.ap-field .hint.warn-hint{color:#ff9500;font-weight:500}
 .ap-select{
   width:100%;padding:8px 12px;border-radius:var(--radius-m);
   background:var(--input);border:1px solid var(--line);color:var(--text);

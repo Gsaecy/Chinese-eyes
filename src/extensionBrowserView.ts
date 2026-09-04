@@ -583,6 +583,7 @@ body{padding:12px;font-size:13px}
       <button id="applyKeyBtn" class="ap-btn ap-btn-primary ap-btn-sm" type="button" title="单独保存 API Key 并自动检测模型">应用</button>
     </div>
     <div class="hint">点「应用」立即保存 Key 并检测模型；本地词典不需要 Key</div>
+    <div class="hint warn-hint">⚠️ 在 VS Code 设置里清空该字段会同步清空密钥库中的真实密钥；如需查看/复制真实密钥，请在本密码框全选复制</div>
   </div>
   <div class="ap-field">
     <label>API 地址（选品牌自动填充；仅「自定义」需手动填）</label>
