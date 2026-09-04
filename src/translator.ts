@@ -594,9 +594,9 @@ export async function listModels(endpoint: string, apiKey: string): Promise<stri
   }
 
   const candidates = [`${base}/models`, `${base}/v1/models`];
-  let lastErr: unknown;
-  for (const url of candidates) {
-    try {
+  // 并行尝试两个候选地址，总等待时间不超过单个请求超时（6s）
+  const results = await Promise.allSettled(
+    candidates.map(async (url) => {
       const res = await fetchWithTimeout(
         url,
         {
@@ -606,28 +606,28 @@ export async function listModels(endpoint: string, apiKey: string): Promise<stri
             Authorization: `Bearer ${apiKey}`,
           },
         },
-        10000
+        6000
       );
       const data = (await res.json()) as { data?: Array<{ id?: string }> };
       const ids = (data?.data || [])
         .map((m) => (m && m.id ? String(m.id).trim() : ''))
         .filter(Boolean);
-      if (ids.length > 0) {
-        return [...new Set(ids)];
-      }
-      lastErr = new Error('接口返回的模型列表为空');
-    } catch (err: any) {
-      lastErr = err;
-      const msg = String(err?.message || err || '');
-      if (/HTTP 40[134]/.test(msg)) {
-        // 认证/权限错误不必再试第二个地址
-        throw new Error(msg.includes('401') ? 'API Key 无效或没有权限（401），请检查 Key' : msg);
-      }
+      if (ids.length === 0) throw new Error('接口返回的模型列表为空');
+      return [...new Set(ids)];
+    })
+  );
+
+  for (const r of results) {
+    if (r.status === 'fulfilled' && r.value.length > 0) {
+      return r.value;
     }
   }
-  throw lastErr instanceof Error
-    ? lastErr
-    : new Error('无法从该地址检索模型列表，请手动输入模型名');
+
+  const firstErr = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+  const msg = String(firstErr?.reason?.message || '');
+  if (/401/.test(msg)) throw new Error('API Key 无效或没有权限（401），请检查 Key');
+  if (/403/.test(msg)) throw new Error('API Key 无权访问模型列表（403）');
+  throw new Error('无法从该地址检索模型列表，请手动输入模型名');
 }
 
 // ============================================================

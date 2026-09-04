@@ -183,24 +183,26 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
             await this.persistSettings(provider, apiKey, endpoint, model);
             const cfg = this.syncConfig();
 
-            // 保存后自动检测模型列表
-            let models: string[] = [];
-            let detectError = '';
-            if (endpoint && apiKey && (provider === 'deepseek' || provider === 'openai-compatible')) {
-              try {
-                models = await listModels(endpoint, apiKey);
-              } catch (e: any) {
-                detectError = e.message || String(e);
-              }
-            }
+            // 先立即返回应用结果（不阻塞按钮状态），模型检测在后台异步进行
             this.postMessage({
               type: 'applyApiKeyResult',
               provider: cfg.provider,
               hasApiKey: !!cfg.apiKey,
               canSummarize: this._translator.canSummarize(),
-              models,
-              detectError,
+              models: [],
+              detectError: '',
             });
+
+            // 后台检测模型列表，完成后单独推送结果
+            if (endpoint && apiKey && (provider === 'deepseek' || provider === 'openai-compatible')) {
+              listModels(endpoint, apiKey)
+                .then((models) => {
+                  this.postMessage({ type: 'detectModelsResult', models });
+                })
+                .catch((e: any) => {
+                  this.postMessage({ type: 'detectModelsResult', error: e.message || String(e) });
+                });
+            }
           } catch (err: any) {
             const raw = err.message || String(err);
             if (/Unable to write into user settings|无法写入用户设置/i.test(raw)) {
@@ -764,29 +766,46 @@ const PRESETS = {
   },
 };
 
-function detectPreset(provider, endpoint, model){
-  for (const key of Object.keys(PRESETS)) {
-    const p = PRESETS[key];
-    if (p.provider === provider && p.endpoint === (endpoint || '').replace(/\\/+$/, '') && p.model === model) {
-      return key;
-    }
-  }
-  return 'custom';
+/** 供应商 → 后端 provider 值（自定义默认按 OpenAI 兼容处理，地址需手动填） */
+const VENDOR_PROVIDER = {
+  local: 'local',
+  deepl: 'deepl',
+  google: 'google',
+  libretranslate: 'libretranslate',
+  custom: 'openai-compatible',
+};
+
+function vendorProvider(vendor){
+  if (VENDOR_PROVIDER[vendor]) return VENDOR_PROVIDER[vendor];
+  const p = PRESETS[vendor];
+  return p ? p.provider : 'openai-compatible';
 }
 
-/** 按 endpoint 域名匹配预设（不要求模型一致，用于自动列出模型候选） */
+/** 按 endpoint 域名匹配品牌预设（不要求模型一致，用于自动列出模型候选） */
 function presetByEndpoint(endpoint){
   const ep = String(endpoint || '').trim().replace(/\\/+$/, '').toLowerCase();
   if (!ep) return null;
   for (const key of Object.keys(PRESETS)) {
     const p = PRESETS[key];
     const pe = p.endpoint.toLowerCase().replace(/\\/+$/, '');
-    if (ep === pe) return p;
+    if (ep === pe) return { key, preset: p };
     try {
-      if (new URL(ep).hostname === new URL(pe).hostname) return p;
+      if (new URL(ep).hostname === new URL(pe).hostname) return { key, preset: p };
     } catch (e) { /* 忽略 */ }
   }
   return null;
+}
+
+/** 根据已保存配置反推供应商选择（老用户兼容，不覆盖原配置） */
+function vendorFromConfig(provider, endpoint, model){
+  if (provider === 'deepl') return 'deepl';
+  if (provider === 'google') return 'google';
+  if (provider === 'libretranslate') return 'libretranslate';
+  if (provider === 'local') return 'local';
+  const m = presetByEndpoint(endpoint);
+  if (m) return m.key;
+  if (provider === 'deepseek' && !endpoint) return 'deepseek';
+  return 'custom';
 }
 
 /** 填充模型下拉框：候选模型 + 当前值（保持选中），不覆盖用户已填内容 */
@@ -1087,12 +1106,8 @@ window.addEventListener('message', (event) => {
       renderCapability();
       if (Array.isArray(msg.models) && msg.models.length > 0) {
         populateModelSelect(msg.models);
-        showToast('API Key 已保存，检测到 ' + msg.models.length + ' 个模型', 'success');
-      } else if (msg.detectError) {
-        showToast('API Key 已保存（模型检测失败：' + msg.detectError + '）', 'info');
-      } else {
-        showToast('API Key 已保存', 'success');
       }
+      showToast('API Key 已应用' + (endpointInput.value.trim() ? '，正在后台检测模型…' : ''), 'success');
       break;
     case 'detectModelsResult':
       detectModelsBtn.disabled = false;
