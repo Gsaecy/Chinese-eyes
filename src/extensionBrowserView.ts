@@ -190,7 +190,15 @@ export class ExtensionBrowserViewProvider implements vscode.WebviewViewProvider 
               canSummarize: this._translator.canSummarize(),
             });
           } catch (err: any) {
-            this.postMessage({ type: 'error', message: '保存设置失败: ' + err.message });
+            const raw = err.message || String(err);
+            if (/Unable to write into user settings|无法写入用户设置/i.test(raw)) {
+              this.postMessage({
+                type: 'error',
+                message: '无法写入 VS Code 用户设置：settings.json 可能存在 JSON 语法错误。请点「在 VS Code 设置中打开」修复 settings.json 后重试。',
+              });
+            } else {
+              this.postMessage({ type: 'error', message: '保存设置失败: ' + raw });
+            }
           }
           break;
         }
