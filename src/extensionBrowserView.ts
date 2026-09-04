@@ -606,6 +606,7 @@ const ICON_GLOBE_S = '<svg class="ico" viewBox="0 0 16 16" width="16" height="16
 const ICON_SPARKLE_S = '<svg class="ico" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.25 9.55 6.45 13.75 8 9.55 9.55 8 13.75 6.45 9.55 2.25 8 6.45 6.45 8 2.25z"/></svg>';
 const ICON_SETTINGS_S = '<svg class="ico" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="1.8"/><circle cx="8" cy="8" r="4.6"/><path d="M8 1.3v2M8 12.7v2M1.3 8h2M12.7 8h2M3.3 3.3l1.4 1.4M11.3 11.3l1.4 1.4M12.7 3.3l-1.4 1.4M4.7 11.3l-1.4 1.4"/></svg>';
 const ICON_STAR = '<svg class="ico" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.75l1.85 3.75 4.15.6-3 2.93.7 4.12L8 11.16l-3.7 1.99.7-4.12-3-2.93 4.15-.6L8 1.75z"/></svg>';
+const ICON_EXTERNAL_S = '<svg class="ico" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3.5h3.5V7"/><path d="M12.5 9.75V12a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 12V6A1.5 1.5 0 0 1 5 4.5h2.25"/><path d="M6.75 9.25 13 3"/></svg>';
 const ICON_WARNING = '<svg class="ico" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.25 14.5 13.5h-13z"/><path d="M8 6.5v3.25"/><path d="M8 11.75h.01"/></svg>';
 
 function welcomeHtml(){
@@ -630,6 +631,7 @@ function welcomeHtml(){
     + '</div>'
     + '<div class="home-footer">'
     + '<h3>支持与更新</h3>'
+    + '<a class="home-link" data-url="https://hongyuguo.com">' + ICON_EXTERNAL_S + ' 开发者主页 hongyuguo.com</a>'
     + '<a class="home-link" data-url="https://github.com/Gsaecy/Chinese-eyes">' + ICON_STAR + ' GitHub 点赞支持开发者</a>'
     + '<div class="home-pro"><span class="ap-badge orange">PRO 预告</span><span>更多供应商预设 · 批量翻译 · 术语库，即将推出</span></div>'
     + '</div>'
