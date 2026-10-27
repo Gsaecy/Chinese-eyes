@@ -6,3 +6,4 @@ out/
 .vscode/tasks.json
 *.log
 .env
+.DS_Store
