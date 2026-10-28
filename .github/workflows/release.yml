@@ -1,0 +1,161 @@
+name: Build & Release
+
+# 推送 main 即构建；构建/测试通过后自动升版本号，同时发布到
+#   - VS Code Marketplace（vsce）
+#   - Open VSX Registry（ovsx）
+#
+# 需要的 Secrets（仓库 Settings → Secrets and variables → Actions）：
+#   VSCE_PAT  Azure DevOps PAT，Organization 选 All accessible organizations，
+#             Scopes 里勾 Marketplace → Manage。没有它就跳过 Marketplace 发布。
+#   OVSX_PAT  open-vsx.org 的 access token（https://open-vsx.org/user-settings/tokens）。
+#             没有它时会尝试 Open VSX 的 OIDC 信任发布。
+#
+# 想只构建不发布：提交信息里写 [skip release]，或在 Actions 页面手动运行并勾选 dry_run。
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: 版本号递增方式
+        type: choice
+        options: [auto, patch, minor, major, none]
+        default: auto
+      dry_run:
+        description: 只构建，不发布
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write # 需要把版本号提交与 tag 推回仓库
+  id-token: write # Open VSX 信任发布（OIDC）需要
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: ${{ !contains(github.event.head_commit.message || '', '[skip release]') }}
+    env:
+      EXT_DIR: .
+      NODE_VERSION: '22'
+    steps:
+      - name: 检查发布凭证
+        id: creds
+        # 用 steps.<id>.outputs 而不是 job 级 env 里直接读 secrets：
+        # 前者在 if 条件里有明确的官方支持，后者容易因为上下文可用性限制而失效。
+        run: |
+          echo "has_vsce=${{ secrets.VSCE_PAT != '' }}" >> "$GITHUB_OUTPUT"
+          echo "has_ovsx=${{ secrets.OVSX_PAT != '' }}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ${{ env.EXT_DIR }}/package-lock.json
+
+      - name: 安装依赖
+        working-directory: ${{ env.EXT_DIR }}
+        run: npm ci
+
+      - name: 编译
+        working-directory: ${{ env.EXT_DIR }}
+        run: npm run compile
+
+      # package.json 里的 test 指向不存在的 out/test/runTest.js（本地实测 MODULE_NOT_FOUND），
+      # lint 脚本缺少 eslint 配置（本地实测退出码 2），因此这里只验证编译。
+      - name: 说明
+        run: echo "该项目暂无可用测试（test 脚本指向不存在的文件），本次仅验证 TypeScript 编译。"
+
+      - name: 计算并写入发布版本
+        id: version
+        # 脚本放在仓库根的 .github/scripts（扩展可能在子目录里，例如 extension/）。
+        # --apply 直接把目标版本写进 package.json 与 package-lock.json：
+        # 不依赖 `npm version` 的 git 工作树检查，子目录里的扩展也不会走样。
+        run: >-
+          node "$GITHUB_WORKSPACE/.github/scripts/next-version.mjs"
+          "$EXT_DIR" "${{ inputs.bump || 'auto' }}" --apply
+
+      - name: 打包 VSIX
+        working-directory: ${{ env.EXT_DIR }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/dist"
+          npx --yes @vscode/vsce package --no-dependencies \
+            --out "$RUNNER_TEMP/dist/${{ steps.version.outputs.artifact }}"
+
+      - name: 发布到 VS Code Marketplace
+        if: ${{ steps.creds.outputs.has_vsce == 'true' && inputs.dry_run != true }}
+        working-directory: ${{ env.EXT_DIR }}
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          npx --yes @vscode/vsce publish \
+            --packagePath "$RUNNER_TEMP/dist/${{ steps.version.outputs.artifact }}" \
+            --skip-duplicate \
+            -p "$VSCE_PAT"
+
+      - name: 发布到 Open VSX（token）
+        if: ${{ steps.creds.outputs.has_ovsx == 'true' && inputs.dry_run != true }}
+        working-directory: ${{ env.EXT_DIR }}
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          npx --yes ovsx@latest publish \
+            "$RUNNER_TEMP/dist/${{ steps.version.outputs.artifact }}" \
+            -p "$OVSX_PAT"
+
+      - name: 发布到 Open VSX（OIDC 信任发布）
+        # 没有 OVSX_PAT 时用工作流的 OIDC ID token 换一个短时 token，不需要存长期密钥。
+        # 前提：命名空间 owner 已在 https://open-vsx.org/user-settings/trusted-publishers
+        # 注册本工作流。这一步失败只给警告，不把整条流水线弄红——否则配置完成前每次推送都红。
+        if: ${{ steps.creds.outputs.has_ovsx != 'true' && inputs.dry_run != true }}
+        working-directory: ${{ env.EXT_DIR }}
+        run: |
+          if npx --yes ovsx@latest publish \
+              "$RUNNER_TEMP/dist/${{ steps.version.outputs.artifact }}" \
+              --trusted-publishing; then
+            echo "已通过 OIDC 信任发布到 Open VSX"
+          else
+            echo "::warning::Open VSX 发布未完成。请在 https://open-vsx.org 用 GitHub 登录创建命名空间 honor-world，并在 https://open-vsx.org/user-settings/tokens 生成 token 存为本仓库 Secrets 的 OVSX_PAT（或注册 trusted publisher）。"
+          fi
+
+      - name: 缺少 VSCE_PAT 的提示
+        if: ${{ steps.creds.outputs.has_vsce != 'true' }}
+        run: echo "::warning::未配置 VSCE_PAT，已跳过 VS Code Marketplace 发布。请到 https://dev.azure.com 生成 PAT（All accessible organizations + Marketplace → Manage），存为本仓库 Secrets 的 VSCE_PAT。"
+
+      - name: 提交版本号并打 tag
+        if: ${{ steps.version.outputs.changed == 'true' && inputs.dry_run != true }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$EXT_DIR/package.json" "$EXT_DIR/package-lock.json"
+          if git diff --cached --quiet; then
+            echo "版本号没有变化，跳过提交"
+          else
+            git commit -m "chore(release): v${{ steps.version.outputs.version }}"
+            # 必须是附注 tag：`git push --follow-tags` 只推附注 tag，轻量 tag 会被漏掉。
+            git tag -a "v${{ steps.version.outputs.version }}" -m "v${{ steps.version.outputs.version }}"
+            git push origin "HEAD:${{ github.ref_name }}"
+            git push origin "v${{ steps.version.outputs.version }}"
+          fi
+
+      - name: 汇总
+        run: |
+          {
+            echo "## 发布结果"
+            echo
+            echo "| 项 | 值 |"
+            echo "| --- | --- |"
+            echo "| 版本 | \`${{ steps.version.outputs.version }}\` |"
+            echo "| Marketplace 已发布版本 | \`${{ steps.version.outputs.marketplace }}\` |"
+            echo "| Open VSX 已发布版本 | \`${{ steps.version.outputs.openvsx }}\` |"
+            echo "| VSCE_PAT | $([ "${{ steps.creds.outputs.has_vsce }}" = "true" ] && echo 已配置 || echo **缺失**) |"
+            echo "| OVSX_PAT | $([ "${{ steps.creds.outputs.has_ovsx }}" = "true" ] && echo 已配置 || echo 未配置（走 OIDC）) |"
+            echo "| dry_run | ${{ inputs.dry_run || false }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
