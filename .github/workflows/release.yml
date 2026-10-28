@@ -53,11 +53,11 @@ jobs:
         run: |
           echo "has_vsce=${{ secrets.VSCE_PAT != '' }}" >> "$GITHUB_OUTPUT"
           echo "has_ovsx=${{ secrets.OVSX_PAT != '' }}" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -132,7 +132,7 @@ jobs:
         if: ${{ steps.creds.outputs.has_vsce != 'true' }}
         run: echo "::warning::未配置 VSCE_PAT，已跳过 VS Code Marketplace 发布。请到 https://dev.azure.com 生成 PAT（All accessible organizations + Marketplace → Manage），存为本仓库 Secrets 的 VSCE_PAT。"
 
-      - name: 提交版本号并打 tag
+      - name: 提交版本号
         if: ${{ steps.version.outputs.changed == 'true' && inputs.dry_run != true }}
         run: |
           git config user.name "github-actions[bot]"
@@ -142,10 +142,25 @@ jobs:
             echo "版本号没有变化，跳过提交"
           else
             git commit -m "chore(release): v${{ steps.version.outputs.version }}"
-            # 必须是附注 tag：`git push --follow-tags` 只推附注 tag，轻量 tag 会被漏掉。
-            git tag -a "v${{ steps.version.outputs.version }}" -m "v${{ steps.version.outputs.version }}"
             git push origin "HEAD:${{ github.ref_name }}"
-            git push origin "v${{ steps.version.outputs.version }}"
+          fi
+
+      - name: 打发布 tag
+        # 只要「本次发布的版本」还不是 Marketplace 上的版本，就值得打个 tag 记录这次发布。
+        # 不能只看 changed：本地版本已经改好（例如 0.2.6 > 在架的 0.2.5）时不需要再改文件，
+        # 但这次发布仍然应该留下 v0.2.6。
+        if: ${{ steps.version.outputs.version != steps.version.outputs.marketplace && inputs.dry_run != true }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          tag="v${{ steps.version.outputs.version }}"
+          # 必须是附注 tag：`--follow-tags` 只推附注 tag，轻量 tag 会被漏掉。
+          # 已存在就跳过（重复运行 / 部分成功的重试都不会失败）。
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "tag $tag 已存在，跳过"
+          else
+            git tag -a "$tag" -m "$tag"
+            git push origin "$tag"
           fi
 
       - name: 汇总
