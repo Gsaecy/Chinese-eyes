@@ -132,26 +132,45 @@ if (mode === 'none') {
 /**
  * 把目标版本写进 package.json 与 package-lock.json（传 `--apply` 时）。
  *
- * 不用 `npm version`：它会做 git 工作树检查，在「仓库根有 .git、扩展在子目录」
- * 的情况下行为随 npm 版本变化（例如 env-sync 的扩展在 extension/ 里）。
- * 这里只改两个字段，格式与原文件保持一致（2 空格缩进 + 结尾换行）。
+ * 两个文件用两种写法，都是为了**不碰其它内容**：
+ *   - package.json：只替换「顶层那一个 `"version"` 字段」。有的项目用 tab 缩进
+ *     （local-skill-quick-launch 就是），整份 JSON.stringify 会把 180 多行全部重排，
+ *     提交记录里看不出真正的改动。
+ *   - package-lock.json：npm 生成的格式固定是 2 空格缩进，用 parse + stringify 安全，
+ *     并且能同时改到顶层 version 与 packages[""].version 两处。
+ *
+ * 不用 `npm version`：它会做 git 工作树检查，在「仓库根有 .git、扩展在子目录」时
+ * 行为随 npm 版本变化（例如 env-sync 的扩展在 extension/ 里）。
  */
 function applyVersion(target) {
-  for (const file of ['package.json', 'package-lock.json']) {
-    const path = join(extDir, file);
-    let source;
-    try {
-      source = readFileSync(path, 'utf8');
-    } catch {
-      continue; // 没有 lock 文件也允许
+  // --- package.json：保留原缩进与键顺序，只动顶层 version ---
+  const manifestPath = join(extDir, 'package.json');
+  const manifestSource = readFileSync(manifestPath, 'utf8');
+  const current = JSON.parse(manifestSource).version;
+  if (current && current !== target) {
+    const unit = /\n([ \t]+)"/.exec(manifestSource)?.[1] ?? '  ';
+    const pattern = new RegExp(`(\\n${unit.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"version"\\s*:\\s*)"${current.replace(/\./g, '\\.')}"`);
+    if (pattern.test(manifestSource)) {
+      writeFileSync(manifestPath, manifestSource.replace(pattern, `$1"${target}"`));
+      console.log(`# 已写入 ${manifestPath} → ${target}`);
+    } else {
+      console.log(`::warning::${manifestPath} 里找不到顶层 version 字段，未修改`);
     }
-    const indent = /\n( +)"/.exec(source)?.[1]?.length ?? 2;
-    const data = JSON.parse(source);
-    data.version = target;
-    if (data.packages && data.packages['']) data.packages[''] = { ...data.packages[''], version: target };
-    writeFileSync(path, `${JSON.stringify(data, null, indent)}\n`);
-    console.log(`# 已写入 ${path} → ${target}`);
   }
+
+  // --- package-lock.json：npm 固定 2 空格缩进，parse/stringify 不改变格式 ---
+  const lockPath = join(extDir, 'package-lock.json');
+  let lockSource;
+  try {
+    lockSource = readFileSync(lockPath, 'utf8');
+  } catch {
+    return;
+  }
+  const lock = JSON.parse(lockSource);
+  lock.version = target;
+  if (lock.packages && lock.packages['']) lock.packages[''] = { ...lock.packages[''], version: target };
+  writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+  console.log(`# 已写入 ${lockPath} → ${target}`);
 }
 
 const lines = [
