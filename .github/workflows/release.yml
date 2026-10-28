@@ -10,7 +10,8 @@ name: Build & Release
 #   OVSX_PAT  open-vsx.org 的 access token（https://open-vsx.org/user-settings/tokens）。
 #             没有它时会尝试 Open VSX 的 OIDC 信任发布。
 #
-# 想只构建不发布：提交信息里写 [skip release]，或在 Actions 页面手动运行并勾选 dry_run。
+# 想只构建不发布：把提交标题写成以 “skip release” 的方括号前缀开头，
+# 或在 Actions 页面手动运行并勾选 dry_run。
 
 on:
   push:
@@ -38,7 +39,9 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    if: ${{ !contains(github.event.head_commit.message || '', '[skip release]') }}
+    # 只有**标题**以 [skip release] 开头才跳过：用 contains() 会误伤——
+    # 提交说明正文里只要提到这个词，整条流水线就被跳过了（真实踩过）。
+    if: ${{ !startsWith(github.event.head_commit.message || '', '[skip release]') }}
     env:
       EXT_DIR: .
       NODE_VERSION: '22'
